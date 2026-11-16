@@ -694,9 +694,9 @@ model TimeSheet {
 }
 
 model Attachment {
-  id          String         @id @default(cuid())
+  id          String          @id @default(cuid())
   companyId   String
-  company     Company        @relation(fields: [companyId], references: [id])
+  company     Company         @relation(fields: [companyId], references: [id])
   entityType  String // WORK_ORDER | ASSET | CUSTOMER | ESTIMATE | INVOICE
   entityId    String
   fileName    String
@@ -705,7 +705,7 @@ model Attachment {
   thumbKey    String?
   contentType String?
   sizeBytes   Int?
-  kind        AttachmentKind @default(DOCUMENT)
+  kind        AttachmentKind  @default(DOCUMENT)
   /// Set for before/after evidence; null for ordinary files.
   phase       EvidencePhase?
   /// Which labeled photo this is (e.g. FRONT_VIEW); null for videos, issue proof and other files.
@@ -713,11 +713,11 @@ model Attachment {
   /// Set when the proof belongs to an extra issue found on site.
   issueId     String?
   issue       WorkOrderIssue? @relation(fields: [issueId], references: [id])
-  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
   createdById String?
-  updatedAt   DateTime       @updatedAt @db.Timestamptz(3)
+  updatedAt   DateTime        @updatedAt @db.Timestamptz(3)
   updatedById String?
-  deletedAt   DateTime?      @db.Timestamptz(3)
+  deletedAt   DateTime?       @db.Timestamptz(3)
 
   @@index([companyId, entityType, entityId])
   @@index([issueId])
@@ -878,29 +878,33 @@ model Payment {
 }
 
 model MaintenancePlan {
-  id            String               @id @default(cuid())
-  companyId     String
-  company       Company              @relation(fields: [companyId], references: [id])
-  customerId    String
-  customer      Customer             @relation(fields: [customerId], references: [id])
-  assetId       String?
-  asset         Asset?               @relation(fields: [assetId], references: [id])
-  addressId     String?
-  address       ServiceAddress?      @relation(fields: [addressId], references: [id])
-  title         String
-  frequency     MaintenanceFrequency
-  intervalCount Int                  @default(1)
-  leadDays      Int                  @default(7)
-  startDate     DateTime             @db.Date
-  nextDueDate   DateTime             @db.Date
-  endDate       DateTime?            @db.Date
-  templateLines Json?
-  isActive      Boolean              @default(true)
-  createdAt     DateTime             @default(now()) @db.Timestamptz(3)
-  createdById   String?
-  updatedAt     DateTime             @updatedAt @db.Timestamptz(3)
-  updatedById   String?
-  deletedAt     DateTime?            @db.Timestamptz(3)
+  id                  String               @id @default(cuid())
+  companyId           String
+  company             Company              @relation(fields: [companyId], references: [id])
+  customerId          String
+  customer            Customer             @relation(fields: [customerId], references: [id])
+  assetId             String?
+  asset               Asset?               @relation(fields: [assetId], references: [id])
+  addressId           String?
+  address             ServiceAddress?      @relation(fields: [addressId], references: [id])
+  title               String
+  description         String?
+  frequency           MaintenanceFrequency
+  intervalCount       Int                  @default(1)
+  leadDays            Int                  @default(7)
+  startDate           DateTime             @db.Date
+  nextDueDate         DateTime             @db.Date
+  endDate             DateTime?            @db.Date
+  templateLines       Json?
+  /// Checklist copied onto every work order the plan creates (optional).
+  checklistTemplateId String?
+  priority            Priority             @default(MEDIUM)
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+  createdById         String?
+  updatedAt           DateTime             @updatedAt @db.Timestamptz(3)
+  updatedById         String?
+  deletedAt           DateTime?            @db.Timestamptz(3)
 
   workOrders WorkOrder[]
 

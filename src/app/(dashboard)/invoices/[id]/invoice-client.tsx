@@ -389,9 +389,7 @@ export function PaymentsSection({
         onOpenChange={(o) => !o && setRemoving(null)}
         title="Remove this payment?"
         description={
-          removing
-            ? `Use this only to fix a mistake. ${money(removing.amount)} will be taken off the amount paid.`
-            : ""
+          removing ? `Use this only to fix a mistake. ${money(removing.amount)} will be taken off the amount paid.` : ""
         }
         confirmLabel="Remove payment"
         destructive

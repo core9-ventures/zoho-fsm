@@ -33,7 +33,14 @@ describe("the DriveSense job form", () => {
       "Vehicle Under Observation",
     ]);
     // Every label has its Urdu text.
-    for (const item of [...VISIT_TYPES, ...VISIT_REASONS, ...WORK_DONE, ...COMPONENTS, ...FINAL_RESULTS, ...CHECK_POINTS])
+    for (const item of [
+      ...VISIT_TYPES,
+      ...VISIT_REASONS,
+      ...WORK_DONE,
+      ...COMPONENTS,
+      ...FINAL_RESULTS,
+      ...CHECK_POINTS,
+    ])
       expect(item.ur.length).toBeGreaterThan(0);
   });
 
@@ -72,7 +79,12 @@ describe("the DriveSense job form", () => {
 
   it("lists what is still empty before closing (a reminder, not a lock)", () => {
     expect(serviceFormGaps(null)).toEqual(["Vehicle number", "Visit type", "Visit reason", "Final result"]);
-    expect(serviceFormGaps(BLANK_SERVICE_FORM)).toEqual(["Vehicle number", "Visit type", "Visit reason", "Final result"]);
+    expect(serviceFormGaps(BLANK_SERVICE_FORM)).toEqual([
+      "Vehicle number",
+      "Visit type",
+      "Visit reason",
+      "Final result",
+    ]);
     expect(
       serviceFormGaps({
         ...BLANK_SERVICE_FORM,

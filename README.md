@@ -234,3 +234,10 @@ Technicians sign in (e.g. `imran@drivesense.local`) and land on **My jobs** — 
 | POST/PUT/DELETE | `/api/v1/invoices/{id}/lines[/{lineId}]` | Lines (drafts) |
 | POST | `/api/v1/invoices/{id}/payments` | `{amount, method, reference?, paidAt?}` |
 | DELETE | `/api/v1/invoices/{id}/payments/{paymentId}` | Remove a wrong payment |
+
+## Phase 7 — Maintenance plans and background worker
+
+- **Maintenance plans** (`/maintenance`, Admin): a plan repeats weekly, monthly, quarterly or yearly for a customer (optionally a site and an asset), with a start date, optional end date, a checklist and a lead time (default 7 days). When today reaches *due date − lead days* a work order is created, the office is notified, and the plan moves to its next due date. **Create due work orders** runs the same job by hand.
+- **Exactly once:** the plan's next due date is claimed and the work order created in one transaction, and a unique index (plan + due date) refuses a duplicate even if two workers race.
+- **Worker:** `pnpm worker` (pg-boss, queue in PostgreSQL schema `pgboss`; uses `DIRECT_DATABASE_URL` or `WORKER_DATABASE_URL`). Hourly tick → for every company whose local clock reads 06:00 it queues one daily run (maintenance generation, overdue alerts, invoice reminders). Nightly: delete GPS points older than 30 days. Emails go through an `email` queue (SMTP, retried 3 times; Mailpit in development).
+- Every job is safe to run again. Reminders are sent once a week per unpaid invoice; overdue alerts once per work order and invoice.

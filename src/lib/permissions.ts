@@ -60,6 +60,7 @@ const API_RESOURCES: Record<string, PermissionResource> = {
   dispatch: "dispatch",
   estimates: "estimates",
   invoices: "invoices",
+  reports: "reports",
   requests: "requests",
   "service-items": "catalog",
   users: "users",

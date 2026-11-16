@@ -171,7 +171,12 @@ describe("service form", () => {
       ConflictError,
     );
     // ...but the office completes it before closing.
-    await workOrdersService.saveServiceForm(db, dispatcher, id, form({ vehicleNumber: "LES-9", finalResult: "RESOLVED" }));
+    await workOrdersService.saveServiceForm(
+      db,
+      dispatcher,
+      id,
+      form({ vehicleNumber: "LES-9", finalResult: "RESOLVED" }),
+    );
     expect((await workOrdersService.get(db, dispatcher, id)).serviceForm?.vehicleNumber).toBe("LES-9");
 
     await workOrdersService.changeStatus(db, dispatcher, id, { status: "CLOSED", reason: "" });

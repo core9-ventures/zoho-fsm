@@ -48,7 +48,7 @@ export const NAV: NavItem[] = [
   { href: "/estimates", label: "Estimates", icon: "estimates", roles: OPS, phase: 6, group: "Billing" },
   { href: "/invoices", label: "Invoices", icon: "invoices", roles: OPS, phase: 6, group: "Billing" },
   { href: "/maintenance", label: "Maintenance plans", icon: "maintenance", roles: ADMIN, phase: 7, group: "Billing" },
-  { href: "/reports", label: "Reports", icon: "reports", roles: ADMIN, phase: 8, group: "Insights" },
+  { href: "/reports", label: "Reports", icon: "reports", roles: OPS, phase: 8, group: "Insights" },
   { href: "/users", label: "Users & technicians", icon: "users", roles: ADMIN, phase: 1, group: "Admin" },
   { href: "/roles", label: "Role management", icon: "roles", roles: ADMIN, phase: 1, group: "Admin" },
   { href: "/catalog", label: "Service catalog", icon: "catalog", roles: ADMIN, phase: 2, group: "Admin" },
