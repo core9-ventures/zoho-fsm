@@ -17,6 +17,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "worker": "tsx --conditions=react-server src/worker/index.ts",
+    "bootstrap": "tsx scripts/bootstrap-super-admin.ts",
     "photos:compress": "tsx scripts/compress-existing-photos.ts",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio"
