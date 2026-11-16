@@ -50,9 +50,6 @@ importers:
       next-themes:
         specifier: 0.4.6
         version: 0.4.6(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
-      nodemailer:
-        specifier: 6.9.16
-        version: 6.9.16
       pg:
         specifier: 8.13.1
         version: 8.13.1
@@ -108,9 +105,6 @@ importers:
       '@types/node':
         specifier: ^20
         version: 20.19.43
-      '@types/nodemailer':
-        specifier: 6.4.17
-        version: 6.4.17
       '@types/pg':
         specifier: 8.11.10
         version: 8.11.10
@@ -1760,9 +1754,6 @@ packages:
 
   '@types/node@20.19.43':
     resolution: {integrity: sha512-6oYBAi5ikg4Pl+kGsoYtawUMBT2zZMCvPNF7pVLnHZfd1zf38DRiWn/gT01RYCdUqkv7Fhr+C9ot4/tb+2sVvA==}
-
-  '@types/nodemailer@6.4.17':
-    resolution: {integrity: sha512-I9CCaIp6DTldEg7vyUTZi8+9Vo0hi1/T8gv3C89yk1rSAAzoKQ8H8ki/jBYJSFoH/BisgLP8tkZMlQ91CIquww==}
 
   '@types/pg@8.11.10':
     resolution: {integrity: sha512-LczQUW4dbOQzsH2RQ5qoeJ6qJPdrcM/DcMLoqWQkMLMsq83J5lAX3LXjdkWdpscFy67JSOWDnh7Ny/sPFykmkg==}
@@ -5472,10 +5463,6 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@types/nodemailer@6.4.17':
-    dependencies:
-      '@types/node': 20.19.43
-
   '@types/pg@8.11.10':
     dependencies:
       '@types/node': 20.19.43
@@ -7071,7 +7058,8 @@ snapshots:
 
   node-fetch-native@1.6.7: {}
 
-  nodemailer@6.9.16: {}
+  nodemailer@6.9.16:
+    optional: true
 
   normalize-path@3.0.0: {}
 

@@ -13,10 +13,6 @@ export const LOCATION_RETENTION_DAYS = 30;
 export const REMINDER_LEAD_DAYS = 3;
 export const REMINDER_EVERY_DAYS = 7;
 
-export type EmailJob = { to: string; subject: string; text: string };
-/** How the jobs hand an email to the queue (the worker passes pg-boss; tests pass a recorder). */
-export type EnqueueEmail = (mail: EmailJob) => Promise<void>;
-
 const CLOSED_WORK_ORDERS = ["COMPLETED", "CLOSED", "CANCELLED", "ON_HOLD"] as const;
 
 async function notifyStaff(db: AppDb, companyId: string, n: { title: string; body: string; link: string }) {
@@ -81,10 +77,10 @@ export async function overdueScan(db: AppDb, companyId: string, now = new Date()
 
 /**
  * Invoice reminders: an unpaid invoice due within 3 days (or already late) is reminded about once a
- * week: a note for the office and, when the customer has an email address, an email.
+ * week: a note for the office (no email is sent).
  */
-export async function invoiceReminders(db: AppDb, companyId: string, enqueue: EnqueueEmail, now = new Date()) {
-  const company = await db.company.findFirst({ select: { name: true, timeZone: true } });
+export async function invoiceReminders(db: AppDb, companyId: string, now = new Date()) {
+  const company = await db.company.findFirst({ select: { timeZone: true } });
   const today = todayIn(company?.timeZone ?? "UTC", now);
   const invoices = await db.invoice.findMany({
     where: {
@@ -97,7 +93,7 @@ export async function invoiceReminders(db: AppDb, companyId: string, enqueue: En
       total: true,
       amountPaid: true,
       dueDate: true,
-      customer: { select: { name: true, email: true } },
+      customer: { select: { name: true } },
     },
   });
   // A reminder sent 7 days ago may be repeated; one sent less than a week ago may not.
@@ -114,27 +110,17 @@ export async function invoiceReminders(db: AppDb, companyId: string, enqueue: En
       body: `${i.customer.name} owes ${balance.toFixed(2)}; due ${due}.`,
       link,
     });
-    if (i.customer.email) {
-      await enqueue({
-        to: i.customer.email,
-        subject: `Payment reminder: invoice ${i.number}`,
-        text:
-          `Hello ${i.customer.name},\n\n` +
-          `A friendly reminder that invoice ${i.number} (balance ${balance.toFixed(2)}) ` +
-          `${due < today ? "was due" : "is due"} on ${due}.\n\nThank you,\n${company?.name ?? "FieldServe"}`,
-      });
-    }
     reminded++;
   }
   return { reminded };
 }
 
 /** Everything one company needs each morning, in its own time zone. Safe to run again. */
-export async function runCompanyDaily(companyId: string, enqueue: EnqueueEmail, now = new Date()) {
+export async function runCompanyDaily(companyId: string, now = new Date()) {
   const db = createDb(tenantContext(companyId, null));
   const maintenance: GenerationResult = await maintenanceService.generateDue(db);
   const overdue = await overdueScan(db, companyId, now);
-  const reminders = await invoiceReminders(db, companyId, enqueue, now);
+  const reminders = await invoiceReminders(db, companyId, now);
   logger.info({ companyId, created: maintenance.created.length, ...overdue, ...reminders }, "automation.company_daily");
   return { maintenance, overdue, reminders };
 }

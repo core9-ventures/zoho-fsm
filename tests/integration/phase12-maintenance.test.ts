@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { CurrentUser } from "@/lib/auth";
 import { createDb, prismaBase, tenantContext, type AppDb } from "@/lib/db";
 import { BadRequestError } from "@/lib/errors";
-import { invoiceReminders, locationCleanup, overdueScan, type EmailJob } from "@/modules/automation";
+import { invoiceReminders, locationCleanup, overdueScan } from "@/modules/automation";
 import { checklistsService } from "@/modules/checklists";
 import { maintenanceService, type MaintenancePlanInput } from "@/modules/maintenance";
 
@@ -269,9 +269,9 @@ describe("background jobs", () => {
     expect(await owner.notification.count({ where: { link } })).toBe(staffCount);
   });
 
-  it("invoice reminders: an office note and an email, once a week", async () => {
+  it("invoice reminders: an office note, once a week", async () => {
     const customer = await owner.customer.create({
-      data: { companyId, name: `P12 payer ${stamp}`, email: `payer-${stamp}@example.test` },
+      data: { companyId, name: `P12 payer ${stamp}` },
     });
     customerIds.push(customer.id);
     const inv = await owner.invoice.create({
@@ -287,27 +287,23 @@ describe("background jobs", () => {
     });
     invoiceIds.push(inv.id);
 
-    const sent: EmailJob[] = [];
-    const enqueue = async (m: EmailJob) => void sent.push(m);
+    const link = `/invoices/${inv.id}`;
+    const notes = () => owner.notification.count({ where: { link, title: { startsWith: "Payment reminder" } } });
     const now = new Date();
-    await invoiceReminders(db, companyId, enqueue, now);
-    const mine = sent.filter((m) => m.to === `payer-${stamp}@example.test`);
-    expect(mine).toHaveLength(1);
-    expect(mine[0].subject).toContain(`INV-P12-${stamp}`);
-    expect(mine[0].text).toContain("200.00");
-    expect(await owner.notification.count({ where: { link: `/invoices/${inv.id}` } })).toBe(staffCount);
+    await invoiceReminders(db, companyId, now);
+    expect(await notes()).toBe(staffCount);
 
     // The next day: no second reminder.
-    await invoiceReminders(db, companyId, enqueue, new Date(now.getTime() + 86_400_000));
-    expect(sent.filter((m) => m.to === `payer-${stamp}@example.test`)).toHaveLength(1);
+    await invoiceReminders(db, companyId, new Date(now.getTime() + 86_400_000));
+    expect(await notes()).toBe(staffCount);
     // A week later: reminded again.
-    await invoiceReminders(db, companyId, enqueue, new Date(now.getTime() + 7 * 86_400_000));
-    expect(sent.filter((m) => m.to === `payer-${stamp}@example.test`)).toHaveLength(2);
+    await invoiceReminders(db, companyId, new Date(now.getTime() + 7 * 86_400_000));
+    expect(await notes()).toBe(staffCount * 2);
 
     // A paid invoice is left alone.
     await owner.invoice.update({ where: { id: inv.id }, data: { status: "PAID", amountPaid: "250.00" } });
-    await invoiceReminders(db, companyId, enqueue, new Date(now.getTime() + 20 * 86_400_000));
-    expect(sent.filter((m) => m.to === `payer-${stamp}@example.test`)).toHaveLength(2);
+    await invoiceReminders(db, companyId, new Date(now.getTime() + 20 * 86_400_000));
+    expect(await notes()).toBe(staffCount * 2);
   });
 
   it("GPS clean-up deletes only points older than the retention window", async () => {

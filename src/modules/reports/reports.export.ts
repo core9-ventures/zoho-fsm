@@ -50,7 +50,10 @@ export async function reportWorkbook(report: Report, company: string): Promise<B
     rows = report.rows;
   }
 
-  ws.addRow([`${company} · ${REPORT_LABEL[report.type]} · ${report.from} to ${report.to}`]).font = { bold: true, size: 12 };
+  ws.addRow([`${company} · ${REPORT_LABEL[report.type]} · ${report.from} to ${report.to}`]).font = {
+    bold: true,
+    size: 12,
+  };
   ws.addRow([]);
   const headerRow = ws.addRow(columns.map((c) => c.header));
   headerRow.font = { bold: true };

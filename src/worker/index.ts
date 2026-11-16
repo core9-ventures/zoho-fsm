@@ -6,16 +6,14 @@
  *   tick              every hour             → for each company whose local clock reads 06:00, queue its daily run
  *   company-daily     once per company/day   → create due maintenance work orders, overdue scan, invoice reminders
  *   location-cleanup  every night 02:30 UTC  → delete GPS points older than 30 days
- *   email             on demand              → send a queued email through SMTP (retries 3 times)
  * Every job is safe to run again: maintenance claims each due date once, reminders and alerts are not repeated.
  */
 import "dotenv/config";
 import PgBoss from "pg-boss";
-import { sendMail } from "@/lib/mailer";
 import { logger } from "@/lib/logger";
-import { companiesDueNow, locationCleanup, runCompanyDaily, type EmailJob } from "@/modules/automation";
+import { companiesDueNow, locationCleanup, runCompanyDaily } from "@/modules/automation";
 
-const QUEUES = ["tick", "company-daily", "location-cleanup", "email"] as const;
+const QUEUES = ["tick", "company-daily", "location-cleanup"] as const;
 
 /** pg-boss needs rights to create its own schema, so it uses the owner connection unless told otherwise. */
 function connectionString() {
@@ -32,17 +30,8 @@ async function main() {
   await boss.start();
   for (const name of QUEUES) await boss.createQueue(name);
 
-  const enqueueEmail = async (mail: EmailJob) => {
-    await boss.send("email", mail, { retryLimit: 3, retryDelay: 60, retryBackoff: true });
-  };
-
-  await boss.work("email", async ([job]) => {
-    await sendMail(job.data as EmailJob);
-    logger.info({ to: (job.data as EmailJob).to }, "worker.email_sent");
-  });
-
   await boss.work("company-daily", async ([job]) => {
-    await runCompanyDaily((job.data as { companyId: string }).companyId, enqueueEmail);
+    await runCompanyDaily((job.data as { companyId: string }).companyId);
   });
 
   await boss.work("tick", async () => {

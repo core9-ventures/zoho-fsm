@@ -79,8 +79,14 @@ describe("dashboard KPIs", () => {
     });
     const near = payments.filter((p) => p.paidAt.toISOString().slice(0, 7) === month);
     // Month edges differ by a few hours between UTC and the company zone, so only compare when nothing is near an edge.
-    const edge = payments.some((p) => Math.abs(p.paidAt.getTime() - new Date(`${month}-01T00:00:00Z`).getTime()) < 86_400_000);
-    if (!edge) expect(k.money!.revenueThisMonth).toBeCloseTo(near.reduce((n, p) => n + Number(p.amount), 0), 2);
+    const edge = payments.some(
+      (p) => Math.abs(p.paidAt.getTime() - new Date(`${month}-01T00:00:00Z`).getTime()) < 86_400_000,
+    );
+    if (!edge)
+      expect(k.money!.revenueThisMonth).toBeCloseTo(
+        near.reduce((n, p) => n + Number(p.amount), 0),
+        2,
+      );
   });
 
   it("never include another company's records", async () => {
@@ -127,7 +133,11 @@ describe("reports", () => {
   });
 
   it("exports a readable Excel file with a header and one row per record", async () => {
-    const report = await reportsService.report(db, admin, { type: "work-orders", from: "2020-01-01", to: "2030-12-31" });
+    const report = await reportsService.report(db, admin, {
+      type: "work-orders",
+      from: "2020-01-01",
+      to: "2030-12-31",
+    });
     const buffer = await reportWorkbook(report, "Demo");
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buffer as unknown as ArrayBuffer);

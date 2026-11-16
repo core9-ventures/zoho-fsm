@@ -123,7 +123,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
                     <TableCell>{r.customer}</TableCell>
                     <TableCell>{r.technician || "—"}</TableCell>
                     <TableCell>
-                      <Badge variant={r.overdue ? "destructive" : "secondary"}>{r.overdue ? "Overdue" : r.status}</Badge>
+                      <Badge variant={r.overdue ? "destructive" : "secondary"}>
+                        {r.overdue ? "Overdue" : r.status}
+                      </Badge>
                     </TableCell>
                     <TableCell>{r.created}</TableCell>
                     <TableCell>{r.due || "—"}</TableCell>

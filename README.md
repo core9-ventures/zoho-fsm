@@ -10,7 +10,7 @@ Prerequisites: Node 20+, pnpm 9 (`npm i -g pnpm@9`), Docker Desktop.
 
 ```bash
 cp .env.example .env              # then set AUTH_SECRET and JWT_SECRET (32+ random chars each)
-docker compose up -d              # PostgreSQL :5432 + Mailpit :1025/:8025
+docker compose up -d              # PostgreSQL :5432
 pnpm install
 pnpm db:migrate                   # applies prisma/migrations (schema + row-level security)
 pnpm db:seed                      # demo data
@@ -239,5 +239,5 @@ Technicians sign in (e.g. `imran@drivesense.local`) and land on **My jobs** — 
 
 - **Maintenance plans** (`/maintenance`, Admin): a plan repeats weekly, monthly, quarterly or yearly for a customer (optionally a site and an asset), with a start date, optional end date, a checklist and a lead time (default 7 days). When today reaches *due date − lead days* a work order is created, the office is notified, and the plan moves to its next due date. **Create due work orders** runs the same job by hand.
 - **Exactly once:** the plan's next due date is claimed and the work order created in one transaction, and a unique index (plan + due date) refuses a duplicate even if two workers race.
-- **Worker:** `pnpm worker` (pg-boss, queue in PostgreSQL schema `pgboss`; uses `DIRECT_DATABASE_URL` or `WORKER_DATABASE_URL`). Hourly tick → for every company whose local clock reads 06:00 it queues one daily run (maintenance generation, overdue alerts, invoice reminders). Nightly: delete GPS points older than 30 days. Emails go through an `email` queue (SMTP, retried 3 times; Mailpit in development).
-- Every job is safe to run again. Reminders are sent once a week per unpaid invoice; overdue alerts once per work order and invoice.
+- **Worker:** `pnpm worker` (pg-boss, queue in PostgreSQL schema `pgboss`; uses `DIRECT_DATABASE_URL` or `WORKER_DATABASE_URL`). Hourly tick → for every company whose local clock reads 06:00 it queues one daily run (maintenance generation, overdue alerts, invoice reminders). Nightly: delete GPS points older than 30 days.
+- Every job is safe to run again. Payment reminders (an office notification, no email) are created once a week per unpaid invoice; overdue alerts once per work order and invoice.

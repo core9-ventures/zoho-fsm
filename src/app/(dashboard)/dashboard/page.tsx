@@ -20,9 +20,10 @@ export default async function DashboardPage() {
   const k = await reportsService.kpis(db, user);
   const money = (n: number) => formatCurrency(n, k.currency);
   const maxDone = Math.max(1, ...k.completedPerDay.map((d) => d.count));
-  const change = k.money && k.money.revenueLastMonth > 0
-    ? Math.round(((k.money.revenueThisMonth - k.money.revenueLastMonth) / k.money.revenueLastMonth) * 100)
-    : null;
+  const change =
+    k.money && k.money.revenueLastMonth > 0
+      ? Math.round(((k.money.revenueThisMonth - k.money.revenueLastMonth) / k.money.revenueLastMonth) * 100)
+      : null;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -51,12 +52,15 @@ export default async function DashboardPage() {
           <Stat
             label="Revenue this month"
             text={money(k.money.revenueThisMonth)}
-            hint={
-              change === null ? "Payments received" : `${change >= 0 ? "+" : ""}${change}% vs last month`
-            }
+            hint={change === null ? "Payments received" : `${change >= 0 ? "+" : ""}${change}% vs last month`}
             href="/reports?type=revenue"
           />
-          <Stat label="Invoiced this month" text={money(k.money.invoicedThisMonth)} hint="Issued invoices" href="/invoices" />
+          <Stat
+            label="Invoiced this month"
+            text={money(k.money.invoicedThisMonth)}
+            hint="Issued invoices"
+            href="/invoices"
+          />
           <Stat label="Outstanding" text={money(k.money.outstanding)} hint="Unpaid balance" href="/invoices" />
           <Stat
             label="Overdue invoices"
@@ -76,9 +80,19 @@ export default async function DashboardPage() {
           <CardContent>
             <div className="flex h-32 items-end gap-1" role="img" aria-label="Completed work orders per day">
               {k.completedPerDay.map((d) => (
-                <div key={d.day} className="flex flex-1 flex-col items-center justify-end gap-1" title={`${formatDay(d.day)}: ${d.count}`}>
+                <div
+                  key={d.day}
+                  className="flex flex-1 flex-col items-center justify-end gap-1"
+                  title={`${formatDay(d.day)}: ${d.count}`}
+                >
                   <span className="text-muted-foreground text-[10px] tabular-nums">{d.count || ""}</span>
-                  <div className="bg-primary w-full rounded-t" style={{ height: `${Math.max(d.count ? 8 : 2, (d.count / maxDone) * 96)}px`, opacity: d.count ? 1 : 0.2 }} />
+                  <div
+                    className="bg-primary w-full rounded-t"
+                    style={{
+                      height: `${Math.max(d.count ? 8 : 2, (d.count / maxDone) * 96)}px`,
+                      opacity: d.count ? 1 : 0.2,
+                    }}
+                  />
                 </div>
               ))}
             </div>

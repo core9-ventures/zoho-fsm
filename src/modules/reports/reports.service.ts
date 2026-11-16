@@ -20,7 +20,11 @@ const OPEN = ["NEW", "SCHEDULED", "DISPATCHED", "IN_PROGRESS", "ON_HOLD"] as con
 const UNPAID = ["SENT", "PARTIALLY_PAID", "OVERDUE"] as const;
 
 const num = (v: { toNumber(): number } | null | undefined) => (v ? v.toNumber() : 0);
-const label = (s: string) => s.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+const label = (s: string) =>
+  s
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/^\w/, (c) => c.toUpperCase());
 
 async function companyOf(db: AppDb, actor: CurrentUser) {
   if (!actor.companyId) throw new ForbiddenError("Reports belong to a company.");
@@ -156,9 +160,7 @@ export const reportsService = {
       money: moneyFigures,
       utilisation: { from: utilFrom, to: today, average, technicians: techs.sort((a, b) => b.percent - a.percent) },
       completedPerDay,
-      byStatus: byStatus
-        .map((g) => ({ status: g.status, count: g._count._all }))
-        .sort((a, b) => b.count - a.count),
+      byStatus: byStatus.map((g) => ({ status: g.status, count: g._count._all })).sort((a, b) => b.count - a.count),
     };
   },
 
