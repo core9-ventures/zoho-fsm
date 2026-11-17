@@ -112,9 +112,23 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Tell the browser which theme is active so native controls (dropdown lists, date pickers, scroll bars) match it. */
+:root {
+  color-scheme: light;
+}
+.dark {
+  color-scheme: dark;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  /* The open list of a native <select>: follows the app theme instead of the system default (white). */
+  select option,
+  select optgroup {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
   }
   body {
     @apply bg-background text-foreground;

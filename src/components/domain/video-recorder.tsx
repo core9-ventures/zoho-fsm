@@ -28,6 +28,21 @@ function pickMime(): string | undefined {
   ].find((t) => MediaRecorder.isTypeSupported(t));
 }
 
+/**
+ * A clip recorded in the browser often has no length in its header (WebM: duration is Infinity), and then some
+ * browsers paint a black frame with a dead timeline. Seeking far past the end makes the browser work the length out.
+ */
+function showFirstFrame(v: HTMLVideoElement) {
+  if (Number.isFinite(v.duration)) return;
+  const back = () => {
+    v.removeEventListener("timeupdate", back);
+    v.currentTime = 0;
+    void v.play().catch(() => undefined);
+  };
+  v.addEventListener("timeupdate", back);
+  v.currentTime = 1e101;
+}
+
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const extOf = (type: string) => (type.includes("mp4") ? "mp4" : "webm");
 
@@ -41,11 +56,14 @@ export function VideoRecorder({
   onClose,
   title,
   onShot,
+  maxSeconds = VIDEO_MAX_SECONDS,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   onShot: (file: File) => Promise<boolean>;
+  /** Longest clip; recording stops by itself at this length (default 60 s). */
+  maxSeconds?: number;
 }) {
   const live = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -162,9 +180,9 @@ export function VideoRecorder({
     setRecording(true);
     timer.current = setInterval(() => {
       setSeconds((n) => {
-        if (n + 1 >= VIDEO_MAX_SECONDS) {
+        if (n + 1 >= maxSeconds) {
           stop();
-          toast.message(`Stopped at ${VIDEO_MAX_SECONDS} seconds, the longest a video can be.`);
+          toast.message(`Stopped at ${maxSeconds} seconds, the longest a video can be.`);
         }
         return n + 1;
       });
@@ -213,7 +231,7 @@ export function VideoRecorder({
         {recording && (
           <span className="flex items-center gap-1.5 text-xs tabular-nums">
             <span className="size-2 animate-pulse rounded-full bg-red-500" aria-hidden="true" />
-            {clock(seconds)} / {clock(VIDEO_MAX_SECONDS)}
+            {clock(seconds)} / {clock(maxSeconds)}
           </span>
         )}
         <button
@@ -250,10 +268,19 @@ export function VideoRecorder({
             <Button variant="secondary" onClick={() => fallback.current?.click()} disabled={saving}>
               {saving ? <Loader2 className="animate-spin" /> : <Camera />} Open phone camera
             </Button>
-            <p className="max-w-xs text-xs text-white/60">Keep it under {VIDEO_MAX_SECONDS} seconds.</p>
+            <p className="max-w-xs text-xs text-white/60">Keep it under {maxSeconds} seconds.</p>
           </div>
         ) : clip ? (
-          <video src={clip.url} controls playsInline className="size-full object-contain" />
+          <video
+            key={clip.url}
+            src={clip.url}
+            controls
+            playsInline
+            autoPlay
+            preload="auto"
+            className="size-full object-contain"
+            onLoadedMetadata={(e) => showFirstFrame(e.currentTarget)}
+          />
         ) : (
           <>
             <video ref={live} muted playsInline className="size-full object-contain" />

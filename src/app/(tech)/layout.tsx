@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CalendarCheck, KeyRound, LogOut, Wrench } from "lucide-react";
+import { CalendarCheck, KeyRound, LogOut, PlusCircle, Wrench } from "lucide-react";
 import { LocationSharing, PwaRegister } from "./field-runtime";
 import { auth } from "@/auth";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
@@ -34,6 +34,13 @@ export default async function TechLayout({ children }: { children: React.ReactNo
         <div className="ml-auto flex items-center gap-1">
           <LocationSharing />
           <ThemeToggle />
+          <Link
+            href="/api/session/end"
+            className="hover:bg-accent flex h-9 items-center gap-1.5 rounded-md px-2 text-xs font-medium"
+            aria-label="Sign out"
+          >
+            <LogOut className="size-4" /> <span className="hidden sm:inline">Sign out</span>
+          </Link>
         </div>
       </header>
 
@@ -43,11 +50,11 @@ export default async function TechLayout({ children }: { children: React.ReactNo
         <Link href="/my-jobs" className="flex flex-col items-center gap-1 py-3 text-xs font-medium">
           <CalendarCheck className="size-5" /> My jobs
         </Link>
+        <Link href="/new-installation" className="flex flex-col items-center gap-1 py-3 text-xs font-medium">
+          <PlusCircle className="size-5" /> New installation
+        </Link>
         <Link href="/account" className="flex flex-col items-center gap-1 py-3 text-xs">
           <KeyRound className="size-5" /> Account
-        </Link>
-        <Link href="/api/session/end" className="flex flex-col items-center gap-1 py-3 text-xs">
-          <LogOut className="size-5" /> Sign out
         </Link>
       </nav>
     </div>

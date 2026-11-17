@@ -1,6 +1,8 @@
 import { route } from "@/lib/api";
 import { INLINE_TYPES } from "@/lib/storage";
+import { NotFoundError } from "@/lib/errors";
 import { assertMine } from "@/modules/field";
+import { installationsService } from "@/modules/installations";
 import { workOrdersService } from "@/modules/work-orders";
 
 /** "bytes=START-END" → the slice to send, or null when it is not a usable single range. */
@@ -32,7 +34,10 @@ export const GET = route({ roles: ["ADMIN", "DISPATCHER", "TECHNICIAN"] }, async
     req.nextUrl.searchParams.get("thumb") === "1",
   );
   // Technicians only see files of jobs assigned to them.
-  if (user.role === "TECHNICIAN") await assertMine(db, user, meta.entityId);
+  if (meta.entityType === "INSTALLATION") {
+    if (!(await installationsService.canOpen(db, user, meta.entityId)))
+      throw new NotFoundError("Attachment", params.id);
+  } else if (user.role === "TECHNICIAN") await assertMine(db, user, meta.entityId);
   const type = isThumb ? "image/jpeg" : (meta.contentType ?? "application/octet-stream");
   const inline = req.nextUrl.searchParams.get("inline") === "1" && INLINE_TYPES.has(type);
   const headers: Record<string, string> = {

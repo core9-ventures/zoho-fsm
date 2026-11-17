@@ -170,6 +170,7 @@ model Company {
   invoiceLines            InvoiceLine[]
   payments                Payment[]
   maintenancePlans        MaintenancePlan[]
+  installations           Installation[]
   technicianLocations     TechnicianLocation[]
   notifications           Notification[]
   numberSequences         NumberSequence[]
@@ -291,6 +292,7 @@ model Customer {
   workOrders       WorkOrder[]
   invoices         Invoice[]
   maintenancePlans MaintenancePlan[]
+  installations    Installation[]
 
   @@index([companyId, name])
 }
@@ -973,4 +975,36 @@ model WorkOrderStatusChange {
   createdAt   DateTime         @default(now()) @db.Timestamptz(3)
 
   @@index([workOrderId, createdAt])
+}
+
+/// A device installed on a new vehicle (the "New installation" form of the technician app).
+/// Its photos and videos are Attachments with entityType INSTALLATION.
+model Installation {
+  id            String    @id @default(cuid())
+  companyId     String
+  company       Company   @relation(fields: [companyId], references: [id])
+  customerId    String
+  customer      Customer  @relation(fields: [customerId], references: [id])
+  vehicleNo     String
+  deviceId      String
+  simNo         String?
+  installDate   DateTime  @db.Date
+  location      String
+  latitude      Decimal?  @db.Decimal(9, 6)
+  longitude     Decimal?  @db.Decimal(9, 6)
+  deviceType    String
+  /// The temperature probe and sensor photo labels are expected.
+  hasTempSensor Boolean   @default(false)
+  /// The service checklist items that were ticked.
+  checklist     String[]  @default([])
+  notes         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  createdById   String?
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  updatedById   String?
+  deletedAt     DateTime? @db.Timestamptz(3)
+
+  @@index([companyId, installDate])
+  @@index([companyId, vehicleNo])
+  @@index([companyId, customerId])
 }

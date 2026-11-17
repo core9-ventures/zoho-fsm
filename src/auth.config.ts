@@ -45,7 +45,13 @@ export const authConfig = {
       const item = navItemFor(pathname);
       if (item && !item.roles.includes(role)) return Response.redirect(home);
       // Technicians only use the field app.
-      if (role === "TECHNICIAN" && !pathname.startsWith("/my-jobs") && !pathname.startsWith("/account")) {
+      if (
+        role === "TECHNICIAN" &&
+        !pathname.startsWith("/my-jobs") &&
+        !pathname.startsWith("/account") &&
+        !pathname.startsWith("/new-installation") &&
+        !pathname.startsWith("/my-installations")
+      ) {
         return Response.redirect(home);
       }
       return true;

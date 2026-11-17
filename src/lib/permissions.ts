@@ -66,6 +66,7 @@ const API_RESOURCES: Record<string, PermissionResource> = {
   users: "users",
   "work-orders": "workOrders",
   attachments: "workOrders",
+  installations: "workOrders",
   "company/settings": "settings",
   field: "field",
 };
@@ -103,6 +104,9 @@ export function permissionForPage(pathname: string): AppPermission | null {
     "/dashboard": "dashboard",
     "/requests": "requests",
     "/work-orders": "workOrders",
+    "/installations": "workOrders",
+    "/new-installation": "field",
+    "/my-installations": "field",
     "/dispatch": "dispatch",
     "/live-map": "dispatch",
     "/customers": "customers",

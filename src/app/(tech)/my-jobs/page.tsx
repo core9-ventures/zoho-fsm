@@ -4,7 +4,9 @@ import { CalendarCheck, ChevronRight, MapPin } from "lucide-react";
 import { PriorityText, WorkOrderStatusBadge } from "@/components/domain/badges";
 import { Card, CardContent } from "@/components/ui/card";
 import { dbFor, requirePermission, requireRole, requireUser } from "@/lib/auth";
+import { InstallationCard } from "../installation-card";
 import { fieldService, type FieldJob } from "@/modules/field";
+import { installationListQuerySchema, installationsService } from "@/modules/installations";
 
 export const metadata: Metadata = { title: "My jobs" };
 
@@ -53,7 +55,11 @@ export default async function MyJobsPage() {
   const user = await requireUser();
   requireRole(user, ["TECHNICIAN"]);
   requirePermission(user, "field:view");
-  const { today, jobs } = await fieldService.myJobs(dbFor(user), user);
+  const db = dbFor(user);
+  const [{ today, jobs }, installs] = await Promise.all([
+    fieldService.myJobs(db, user),
+    installationsService.list(db, user, installationListQuerySchema.parse({ pageSize: 5 })),
+  ]);
 
   const finished = (j: FieldJob) => j.status === "COMPLETED" || j.status === "CLOSED" || j.status === "CANCELLED";
   const open = jobs.filter((j) => !finished(j));
@@ -110,6 +116,32 @@ export default async function MyJobsPage() {
           ))}
         </section>
       )}
+
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-muted-foreground text-sm font-semibold">
+            My installations{installs.totalCount > 0 ? ` (${installs.totalCount})` : ""}
+          </h2>
+          {installs.totalCount > installs.items.length && (
+            <Link href="/my-installations" className="text-primary text-sm font-medium">
+              See all
+            </Link>
+          )}
+        </div>
+        {installs.items.length === 0 ? (
+          <p className="text-muted-foreground rounded-md border border-dashed p-6 text-center text-sm">
+            You have not recorded any installation yet.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {installs.items.map((i) => (
+              <li key={i.id}>
+                <InstallationCard i={i} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

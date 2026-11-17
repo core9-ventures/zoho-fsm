@@ -41,6 +41,7 @@ export const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard", roles: OPS, phase: 8, group: "Operations" },
   { href: "/requests", label: "Service requests", icon: "requests", roles: OPS, phase: 3, group: "Operations" },
   { href: "/work-orders", label: "Work orders", icon: "workOrders", roles: OPS, phase: 3, group: "Operations" },
+  { href: "/installations", label: "Installations", icon: "assets", roles: OPS, phase: 9, group: "Operations" },
   { href: "/dispatch", label: "Dispatch board", icon: "dispatch", roles: OPS, phase: 4, group: "Operations" },
   { href: "/live-map", label: "Live map", icon: "map", roles: OPS, phase: 5, group: "Operations" },
   { href: "/customers", label: "Customers", icon: "customers", roles: OPS, phase: 2, group: "Customers" },

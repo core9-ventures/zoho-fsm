@@ -1,6 +1,6 @@
 "use client";
 
-import { Camera, Loader2, Pencil, Play, Plus, RefreshCw, TriangleAlert, Trash2, Video } from "lucide-react";
+import { Camera, Images, Loader2, Pencil, Play, Plus, RefreshCw, TriangleAlert, Trash2, Video } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -17,6 +17,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -48,7 +54,15 @@ export type EvidenceApi = {
   deleteFile: (attachmentId: string) => Promise<ActionResult<unknown>>;
   /** The "Temperature sensor installed" switch. */
   setTempSensor: (on: boolean) => Promise<ActionResult<unknown>>;
+  /** Optional: take a file without a server (the New installation preview keeps files in memory). */
+  upload?: (file: File, fields: UploadFields) => Promise<{ ok: boolean; message?: string }>;
+  /** Optional: called after a change instead of reloading the page from the server. */
+  refresh?: () => void;
+  /** Optional: where to show a stored file (defaults to the attachments endpoint). */
+  fileUrl?: (id: string, thumb: boolean) => string;
 };
+
+export type UploadFields = { phase?: string; slot?: string; issueId?: string };
 
 type Common = {
   api: EvidenceApi;
@@ -66,6 +80,30 @@ const mediaUrl = (id: string) => `/api/v1/attachments/${id}?inline=1`;
 /** The small preview made on upload (the full file when there is none). Used in grids; a tap opens the full photo. */
 const thumbUrl = (id: string) => `/api/v1/attachments/${id}?inline=1&thumb=1`;
 
+/** Sends one file to the backend of the screen: a server endpoint, or the in-memory one of a preview. */
+async function postFile(
+  api: EvidenceApi,
+  file: File,
+  fields: UploadFields,
+): Promise<{ ok: boolean; message?: string }> {
+  if (api.upload) return api.upload(file, fields);
+  const body = new FormData();
+  body.append("file", file);
+  for (const [key, value] of Object.entries(fields)) if (value) body.append(key, value);
+  const res = await fetch(api.uploadUrl, { method: "POST", body }).catch(() => null);
+  const json = (await res?.json().catch(() => ({}))) as { message?: string } | undefined;
+  return { ok: !!res?.ok, message: json?.message };
+}
+
+/** Shows what changed: reloads from the server, or runs the own refresh of a preview. */
+function useRefresh(api: EvidenceApi) {
+  const router = useRouter();
+  return () => (api.refresh ? api.refresh() : router.refresh());
+}
+
+const urlOf = (api: EvidenceApi, id: string, thumb = false) =>
+  api.fileUrl ? api.fileUrl(id, thumb) : thumb ? thumbUrl(id) : mediaUrl(id);
+
 /** Plain-language count: "2 of 4 photos · no video yet". */
 function countText(items: MediaDto[]) {
   const photos = items.filter((m) => m.kind === "PHOTO").length;
@@ -81,7 +119,7 @@ function MediaSlot({
   videoOnly = false,
   ...c
 }: Common & { phase: EvidencePhaseValue; issueId?: string; items: MediaDto[]; videoOnly?: boolean }) {
-  const router = useRouter();
+  const refresh = useRefresh(c.api);
   const photoInput = useRef<HTMLInputElement>(null);
   const videoInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -93,17 +131,12 @@ function MediaSlot({
   const [cameraOk, setCameraOk] = useState(false);
   useEffect(() => setCameraOk(canOpenCamera()), []);
   const takePhoto = async (file: File): Promise<boolean> => {
-    const body = new FormData();
-    body.append("file", file);
-    body.append("phase", phase);
-    if (issueId) body.append("issueId", issueId);
-    const res = await fetch(c.api.uploadUrl, { method: "POST", body }).catch(() => null);
-    const json = (await res?.json().catch(() => ({}))) as { message?: string } | undefined;
-    if (!res?.ok) {
-      toast.error(`${json?.message ?? "upload failed. Check your connection and try again."}`);
+    const res = await postFile(c.api, file, { phase, issueId });
+    if (!res.ok) {
+      toast.error(`${res.message ?? "upload failed. Check your connection and try again."}`);
       return false;
     }
-    router.refresh();
+    refresh();
     return true;
   };
 
@@ -120,20 +153,15 @@ function MediaSlot({
     setBusy(true);
     let ok = 0;
     for (const file of list.slice(0, Math.max(0, room))) {
-      const body = new FormData();
-      body.append("file", file);
-      body.append("phase", phase);
-      if (issueId) body.append("issueId", issueId);
-      const res = await fetch(c.api.uploadUrl, { method: "POST", body }).catch(() => null);
-      const json = (await res?.json().catch(() => ({}))) as { message?: string } | undefined;
-      if (res?.ok) ok++;
-      else toast.error(`${file.name}: ${json?.message ?? "upload failed. Check your connection and try again."}`);
+      const res = await postFile(c.api, file, { phase, issueId });
+      if (res.ok) ok++;
+      else toast.error(`${file.name}: ${res.message ?? "upload failed. Check your connection and try again."}`);
     }
     setBusy(false);
     for (const ref of [photoInput, videoInput]) if (ref.current) ref.current.value = "";
     if (ok) {
       toast.success(`${ok} file${ok === 1 ? "" : "s"} uploaded.`);
-      router.refresh();
+      refresh();
     }
   };
 
@@ -141,7 +169,7 @@ function MediaSlot({
     const res = await c.api.deleteFile(m.id);
     if (!res.ok) return void toast.error(res.error);
     toast.success("Removed.");
-    router.refresh();
+    refresh();
   };
 
   return (
@@ -171,17 +199,17 @@ function MediaSlot({
             <figure key={m.id} className="relative overflow-hidden rounded-md border">
               {m.kind === "VIDEO" ? (
                 <video
-                  src={mediaUrl(m.id)}
+                  src={urlOf(c.api, m.id)}
                   controls
                   playsInline
                   preload="metadata"
                   className="aspect-square w-full bg-black object-contain"
                 />
               ) : (
-                <a href={mediaUrl(m.id)} target="_blank" rel="noreferrer">
+                <a href={urlOf(c.api, m.id)} target="_blank" rel="noreferrer">
                   {/* eslint-disable-next-line @next/next/no-img-element -- authenticated API URL, not optimisable */}
                   <img
-                    src={thumbUrl(m.id)}
+                    src={urlOf(c.api, m.id, true)}
                     alt={`${PHASE_LABEL[phase]} photo`}
                     className="aspect-square w-full object-cover"
                     loading="lazy"
@@ -250,7 +278,22 @@ function MediaSlot({
   );
 }
 
-const CELL = "size-[4.5rem]";
+/** Length of a video file in seconds (0 when the browser cannot tell, so the file is let through). */
+function videoSeconds(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    const done = (n: number) => {
+      URL.revokeObjectURL(url);
+      resolve(n);
+    };
+    v.preload = "metadata";
+    v.onloadedmetadata = () => done(Number.isFinite(v.duration) ? v.duration : 0);
+    v.onerror = () => done(0);
+    v.src = url;
+  });
+}
+
 const ROW = "grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] items-center gap-x-3 sm:gap-x-5";
 
 /**
@@ -263,69 +306,96 @@ function SlotCell({
   phase,
   item,
   kind = "PHOTO",
+  maxSeconds,
+  big,
   ...c
 }: Common & {
+  /** Double-size box (installation photo list). */
+  big?: boolean;
   label: string;
   slot?: string;
-  phase: EvidencePhaseValue;
+  /** Before / After for a work order; left out where a box is not tied to a phase (a new installation). */
+  phase?: EvidencePhaseValue;
   item?: MediaDto;
   kind?: "PHOTO" | "VIDEO";
+  /** Longest video this box accepts (checked on gallery files too). */
+  maxSeconds?: number;
 }) {
-  const router = useRouter();
+  const refresh = useRefresh(c.api);
   const input = useRef<HTMLInputElement>(null);
+  const gallery = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const name = `${label} ${PHASE_LABEL[phase].toLowerCase()}`;
+  const name = phase ? `${label} ${PHASE_LABEL[phase].toLowerCase()}` : label;
   const Icon = kind === "VIDEO" ? Video : Camera;
 
   const upload = async (file: File): Promise<boolean> => {
+    if (kind === "VIDEO" && maxSeconds && (await videoSeconds(file)) > maxSeconds + 0.5) {
+      toast.error(`${name}: the video can be at most ${maxSeconds} seconds.`);
+      return false;
+    }
     setBusy(true);
-    const body = new FormData();
-    body.append("file", file);
-    body.append("phase", phase);
-    if (slot) body.append("slot", slot);
-    const res = await fetch(c.api.uploadUrl, { method: "POST", body }).catch(() => null);
-    const json = (await res?.json().catch(() => ({}))) as { message?: string } | undefined;
+    const res = await postFile(c.api, file, { phase, slot });
     setBusy(false);
-    if (!res?.ok) {
-      toast.error(`${name}: ${json?.message ?? "upload failed. Check your connection and try again."}`);
+    if (!res.ok) {
+      toast.error(`${name}: ${res.message ?? "upload failed. Check your connection and try again."}`);
       return false;
     }
     toast.success(`${name} saved.`);
-    router.refresh();
+    refresh();
     return true;
   };
 
   const send = async (files: FileList | null) => {
     const file = files?.[0];
     if (file) await upload(file);
-    if (input.current) input.current.value = "";
+    for (const ref of [input, gallery]) if (ref.current) ref.current.value = "";
   };
 
-  // A technician takes the photo in the app's own camera; the office picks a file.
+  // A technician can use the app's own camera or choose a file from the gallery; the office picks a file.
   const [cam, setCam] = useState(false);
   const [rec, setRec] = useState(false);
-  const pick = () => {
-    if (c.capture && kind === "PHOTO" && canOpenCamera()) return setCam(true);
-    if (c.capture && kind === "VIDEO" && canRecordVideo()) return setRec(true);
+  const openGallery = () => gallery.current?.click();
+  const openCamera = () => {
+    if (kind === "PHOTO" && canOpenCamera()) return setCam(true);
+    if (kind === "VIDEO" && canRecordVideo()) return setRec(true);
     input.current?.click();
   };
+  /** On a phone the box offers camera or gallery; elsewhere it goes straight to the file picker. */
+  const withChoice = (trigger: React.ReactElement) =>
+    c.capture ? (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+        <DropdownMenuContent align="center">
+          <DropdownMenuItem onSelect={openCamera}>
+            <Icon /> {kind === "VIDEO" ? "Record video" : "Take photo"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={openGallery}>
+            <Images /> Choose from gallery
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ) : (
+      trigger
+    );
+  const pick = c.capture ? undefined : openGallery;
 
   const remove = async () => {
     if (!item) return;
     const res = await c.api.deleteFile(item.id);
     if (!res.ok) return void toast.error(res.error);
     toast.success("Removed.");
-    router.refresh();
+    refresh();
   };
 
   const bar = "flex size-6 items-center justify-center rounded text-white hover:bg-white/25 disabled:opacity-60";
+  const CELL = big ? "h-16 w-full" : "size-[4.5rem]";
 
   return (
     <div className="flex justify-center">
       {item ? (
         <div className={cn(CELL, "relative overflow-hidden rounded-md border")}>
           <a
-            href={mediaUrl(item.id)}
+            href={urlOf(c.api, item.id)}
             target="_blank"
             rel="noreferrer"
             aria-label={`Open ${name}`}
@@ -334,7 +404,7 @@ function SlotCell({
             {kind === "VIDEO" ? (
               <>
                 <video
-                  src={mediaUrl(item.id)}
+                  src={urlOf(c.api, item.id)}
                   muted
                   playsInline
                   preload="metadata"
@@ -344,14 +414,16 @@ function SlotCell({
               </>
             ) : (
               // eslint-disable-next-line @next/next/no-img-element -- authenticated API URL, not optimisable
-              <img src={thumbUrl(item.id)} alt={name} className="size-full object-cover" loading="lazy" />
+              <img src={urlOf(c.api, item.id, true)} alt={name} className="size-full object-cover" loading="lazy" />
             )}
           </a>
           {!c.closed && (
             <div className="absolute inset-x-0 bottom-0 flex justify-end gap-0.5 bg-black/55 px-0.5">
-              <button type="button" className={bar} aria-label={`Retake ${name}`} disabled={busy} onClick={pick}>
-                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-              </button>
+              {withChoice(
+                <button type="button" className={bar} aria-label={`Retake ${name}`} disabled={busy} onClick={pick}>
+                  {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                </button>,
+              )}
               {(c.canDeleteAny || item.authorId === c.meId) && (
                 <button type="button" className={bar} aria-label={`Remove ${name}`} onClick={remove}>
                   <Trash2 className="size-3.5" />
@@ -363,26 +435,41 @@ function SlotCell({
       ) : c.closed ? (
         <div className={cn(CELL, "rounded-md border border-dashed")} aria-label={`No ${name}`} />
       ) : (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={pick}
-          aria-label={`Add ${name}`}
-          className={cn(
-            CELL,
-            "text-muted-foreground hover:bg-muted/60 flex items-center justify-center rounded-md border border-dashed disabled:opacity-60",
-          )}
-        >
-          {busy ? <Loader2 className="size-5 animate-spin" /> : <Icon className="size-5" />}
-        </button>
+        withChoice(
+          <button
+            type="button"
+            disabled={busy}
+            onClick={pick}
+            aria-label={`Add ${name}`}
+            className={cn(
+              CELL,
+              "border-primary/60 bg-primary/5 text-primary hover:bg-primary/10 flex items-center justify-center rounded-md border-2 border-dashed disabled:opacity-60",
+            )}
+          >
+            {busy ? (
+              <Loader2 className={big ? "size-7 animate-spin" : "size-6 animate-spin"} />
+            ) : (
+              <Icon className={big ? "size-7" : "size-6"} />
+            )}
+          </button>,
+        )
       )}
       {cam && <CameraCapture open mode="single" title={name} onClose={() => setCam(false)} onShot={upload} />}
-      {rec && <VideoRecorder open title={name} onClose={() => setRec(false)} onShot={upload} />}
+      {rec && <VideoRecorder open title={name} onClose={() => setRec(false)} onShot={upload} maxSeconds={maxSeconds} />}
+      {/* Camera of the phone, used when the app's own camera is not available. */}
       <input
         ref={input}
         type="file"
         accept={kind === "VIDEO" ? "video/*" : "image/*"}
         {...(c.capture ? { capture: "environment" as const } : {})}
+        className="hidden"
+        onChange={(e) => send(e.target.files)}
+      />
+      {/* Gallery: any photo or video file saved on the device. */}
+      <input
+        ref={gallery}
+        type="file"
+        accept={kind === "VIDEO" ? "video/*" : "image/*"}
         className="hidden"
         onChange={(e) => send(e.target.files)}
       />
@@ -397,7 +484,7 @@ export type OtherPhoto = { id: string; fileName: string; authorId: string | null
  * "Other photos": anything else worth showing, up to 15 in total. Several can be picked at once.
  */
 function OtherPhotos({ photos, ...c }: Common & { photos: OtherPhoto[] }) {
-  const router = useRouter();
+  const refresh = useRefresh(c.api);
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(0);
   const [cam, setCam] = useState<{ room: number } | null>(null);
@@ -408,12 +495,9 @@ function OtherPhotos({ photos, ...c }: Common & { photos: OtherPhoto[] }) {
 
   /** Uploads one photo; returns whether it was saved. */
   const uploadOne = async (file: File): Promise<boolean> => {
-    const body = new FormData();
-    body.append("file", file);
-    const res = await fetch(c.api.uploadUrl, { method: "POST", body }).catch(() => null);
-    const json = (await res?.json().catch(() => ({}))) as { message?: string } | undefined;
-    if (res?.ok) return true;
-    toast.error(`${file.name}: ${json?.message ?? "upload failed. Check your connection and try again."}`);
+    const res = await postFile(c.api, file, {});
+    if (res.ok) return true;
+    toast.error(`${file.name}: ${res.message ?? "upload failed. Check your connection and try again."}`);
     return false;
   };
 
@@ -437,7 +521,7 @@ function OtherPhotos({ photos, ...c }: Common & { photos: OtherPhoto[] }) {
     if (input.current) input.current.value = "";
     if (ok) {
       toast.success(`${ok} photo${ok === 1 ? "" : "s"} added.`);
-      router.refresh();
+      refresh();
     }
   };
 
@@ -445,7 +529,7 @@ function OtherPhotos({ photos, ...c }: Common & { photos: OtherPhoto[] }) {
     const res = await c.api.deleteFile(p.id);
     if (!res.ok) return void toast.error(res.error);
     toast.success("Removed.");
-    router.refresh();
+    refresh();
   };
 
   return (
@@ -460,9 +544,14 @@ function OtherPhotos({ photos, ...c }: Common & { photos: OtherPhoto[] }) {
         <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
           {photos.map((p) => (
             <div key={p.id} className="relative aspect-square overflow-hidden rounded-md border">
-              <a href={mediaUrl(p.id)} target="_blank" rel="noreferrer" aria-label={`Open ${p.fileName}`}>
+              <a href={urlOf(c.api, p.id)} target="_blank" rel="noreferrer" aria-label={`Open ${p.fileName}`}>
                 {/* eslint-disable-next-line @next/next/no-img-element -- authenticated API URL, not optimisable */}
-                <img src={thumbUrl(p.id)} alt={p.fileName} className="size-full object-cover" loading="lazy" />
+                <img
+                  src={urlOf(c.api, p.id, true)}
+                  alt={p.fileName}
+                  className="size-full object-cover"
+                  loading="lazy"
+                />
               </a>
               {!c.closed && (c.canDeleteAny || p.authorId === c.meId) && (
                 <button
@@ -485,7 +574,6 @@ function OtherPhotos({ photos, ...c }: Common & { photos: OtherPhoto[] }) {
             type="file"
             accept="image/*"
             multiple
-            {...(c.capture ? { capture: "environment" as const } : {})}
             className="hidden"
             onChange={(e) => send(e.target.files)}
           />
@@ -529,7 +617,7 @@ function OtherPhotos({ photos, ...c }: Common & { photos: OtherPhoto[] }) {
               onClose={() => setCam(null)}
               onShot={async (file) => {
                 const ok = await uploadOne(file);
-                if (ok) router.refresh();
+                if (ok) refresh();
                 return ok;
               }}
             />
@@ -545,8 +633,13 @@ function OtherPhotos({ photos, ...c }: Common & { photos: OtherPhoto[] }) {
  * The reported problem's photos as one tidy table: a row for every label, a box under Before and one
  * under After, then the optional video. Counts above each column show what is still missing.
  */
-function LabeledPhotos({ evidence, hasTempSensor, ...c }: Common & { evidence: EvidenceDto; hasTempSensor: boolean }) {
-  const wanted = slotsFor(hasTempSensor);
+function LabeledPhotos({
+  evidence,
+  hasTempSensor,
+  slotLabels,
+  ...c
+}: Common & { evidence: EvidenceDto; hasTempSensor: boolean; slotLabels?: Record<string, string> }) {
+  const wanted = slotsFor(hasTempSensor).map((s) => ({ ...s, label: slotLabels?.[s.key] ?? s.label }));
   const phases = [
     ["BEFORE", evidence.before],
     ["AFTER", evidence.after],
@@ -778,6 +871,165 @@ function IssueCard({ issue, ...c }: Common & { issue: IssueDto }) {
   );
 }
 
+type PhotosProps = {
+  evidence: EvidenceDto;
+  api: EvidenceApi;
+  closed: boolean;
+  meId: string;
+  canDeleteAny: boolean;
+  hasTempSensor: boolean;
+  /** Ordinary photos of the job (not before/after proof). */
+  otherPhotos: OtherPhoto[];
+  capture?: boolean;
+  /** Heading of the card (a work order shows the reported problem; a new installation says "Installation photos"). */
+  title?: string;
+  /** Rename some labeled photos on this screen only, by slot key (e.g. { BACK_CAMERA: "Vehicle app screenshot" }). */
+  slotLabels?: Record<string, string>;
+};
+
+/**
+ * The photo area of a job: temperature-sensor switch, the labeled Before / After table with video, and
+ * Other photos. Shared by the work order, the technician app and the New installation form.
+ */
+export function PhotosCard({
+  evidence,
+  api,
+  closed,
+  meId,
+  canDeleteAny,
+  hasTempSensor,
+  otherPhotos,
+  capture = false,
+  title = "Reported problem: before and after",
+  slotLabels,
+}: PhotosProps) {
+  const refresh = useRefresh(api);
+  const [tempBusy, setTempBusy] = useState(false);
+  const c: Common = { api, closed, meId, canDeleteAny, capture };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Camera className="size-4" /> {title}
+        </CardTitle>
+        <p className="text-muted-foreground text-xs">Tap a box to add a photo. Retake replaces it.</p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="bg-muted/40 flex items-center gap-3 rounded-md px-3 py-2">
+          <Switch
+            id="temp-sensor"
+            checked={hasTempSensor}
+            disabled={closed || tempBusy}
+            onCheckedChange={async (on) => {
+              setTempBusy(true);
+              const res = await api.setTempSensor(on);
+              setTempBusy(false);
+              if (!res.ok) return void toast.error(res.error);
+              refresh();
+            }}
+          />
+          <Label htmlFor="temp-sensor" className="flex-1 text-sm font-normal">
+            Temperature sensor installed
+          </Label>
+          <span className="text-muted-foreground hidden text-xs sm:inline">adds 2 photos</span>
+        </div>
+        <LabeledPhotos evidence={evidence} hasTempSensor={hasTempSensor} slotLabels={slotLabels} {...c} />
+        <div className="border-t pt-4">
+          <OtherPhotos photos={otherPhotos} {...c} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** A label of the one-photo-per-label list (new installation). */
+export type SlotDef = { key: string; label: string };
+
+type SlotListProps = {
+  /** Every labeled photo and the video of the record (other photos go in `otherPhotos`). */
+  files: MediaDto[];
+  slots: readonly SlotDef[];
+  /** Label and length limit of the single video box; leave out for no video. */
+  video?: { label: string; maxSeconds: number };
+  api: EvidenceApi;
+  closed: boolean;
+  meId: string;
+  canDeleteAny: boolean;
+  otherPhotos: OtherPhoto[];
+  capture?: boolean;
+  title?: string;
+  /** Optional switch shown above the list (e.g. "Temperature sensor installed" that adds more labels). */
+  header?: React.ReactNode;
+};
+
+/**
+ * Photos of a record that has no before/after: one box for every label in a single list, one video box
+ * with a length limit, then Other photos. Taking a box again replaces its file.
+ */
+export function SlotListCard({
+  files,
+  slots,
+  video,
+  api,
+  closed,
+  meId,
+  canDeleteAny,
+  otherPhotos,
+  capture = false,
+  title = "Photos",
+  header,
+}: SlotListProps) {
+  const c: Common = { api, closed, meId, canDeleteAny, capture };
+  const done = slots.filter((s) => files.some((m) => m.slot === s.key)).length;
+  const ROW1 = "grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-center gap-x-3 rounded-lg border bg-card px-3 sm:gap-x-5";
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Camera className="size-4" /> {title}
+          <span
+            className={cn(
+              "ml-auto text-xs font-normal tabular-nums",
+              done === slots.length ? "text-emerald-600" : "text-muted-foreground",
+            )}
+          >
+            {done}/{slots.length}
+          </span>
+        </CardTitle>
+        <p className="text-muted-foreground text-xs">Tap a box to add a photo. Retake replaces it.</p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {header}
+        <div className="space-y-2">
+          {slots.map((s) => (
+            <div key={s.key} className={cn(ROW1, "py-2.5")}>
+              <span className="text-base font-semibold">{s.label}</span>
+              <SlotCell big label={s.label} slot={s.key} item={files.find((m) => m.slot === s.key)} {...c} />
+            </div>
+          ))}
+          {video && (
+            <div className={cn(ROW1, "py-2.5")}>
+              <span className="text-base font-semibold">
+                {video.label} <span className="text-muted-foreground">(up to {video.maxSeconds} s)</span>
+              </span>
+              <SlotCell
+                big
+                label={video.label}
+                kind="VIDEO"
+                maxSeconds={video.maxSeconds}
+                item={files.find((m) => m.kind === "VIDEO")}
+                {...c}
+              />
+            </div>
+          )}
+        </div>
+        <OtherPhotos photos={otherPhotos} {...c} />
+      </CardContent>
+    </Card>
+  );
+}
+
 /**
  * Proof for a work order: Before / After photos and video of the reported problem, and a list of
  * other issues found on site, each with its own Before / After proof.
@@ -804,45 +1056,21 @@ export function EvidenceSection({
   otherPhotos: OtherPhoto[];
   capture?: boolean;
 }) {
-  const router = useRouter();
   const [adding, setAdding] = useState(false);
-  const [tempBusy, setTempBusy] = useState(false);
   const c: Common = { api, closed, meId, canDeleteAny, capture };
 
   return (
     <>
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Camera className="size-4" /> Reported problem: before and after
-          </CardTitle>
-          <p className="text-muted-foreground text-xs">Tap a box to add a photo. Retake replaces it.</p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="bg-muted/40 flex items-center gap-3 rounded-md px-3 py-2">
-            <Switch
-              id="temp-sensor"
-              checked={hasTempSensor}
-              disabled={closed || tempBusy}
-              onCheckedChange={async (on) => {
-                setTempBusy(true);
-                const res = await api.setTempSensor(on);
-                setTempBusy(false);
-                if (!res.ok) return void toast.error(res.error);
-                router.refresh();
-              }}
-            />
-            <Label htmlFor="temp-sensor" className="flex-1 text-sm font-normal">
-              Temperature sensor installed
-            </Label>
-            <span className="text-muted-foreground hidden text-xs sm:inline">adds 2 photos</span>
-          </div>
-          <LabeledPhotos evidence={evidence} hasTempSensor={hasTempSensor} {...c} />
-          <div className="border-t pt-4">
-            <OtherPhotos photos={otherPhotos} {...c} />
-          </div>
-        </CardContent>
-      </Card>
+      <PhotosCard
+        evidence={evidence}
+        api={api}
+        closed={closed}
+        meId={meId}
+        canDeleteAny={canDeleteAny}
+        hasTempSensor={hasTempSensor}
+        otherPhotos={otherPhotos}
+        capture={capture}
+      />
 
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
