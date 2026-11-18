@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   completeInstallationAction,
   createInstallationAction,
+  discardHeldInstallationAction,
   holdInstallationAction,
 } from "@/modules/installations/installations.actions";
 import {
@@ -101,7 +102,26 @@ export function NewInstallationForm({ customers, held }: { customers: CustomerCh
   }
 
   /** Empties every field (and the photos of a new form). The photos of a held record stay saved. */
-  function clearAll() {
+  async function clearAll() {
+    if (held) {
+      // On a held record this deletes the record itself (and its photos with it).
+      if (!window.confirm("Clear all will delete this held installation and its photos. This cannot be undone. Continue?"))
+        return;
+      setBusy(true);
+      try {
+        const res = await discardHeldInstallationAction(held.id).catch(() => null);
+        if (!res || !res.ok) {
+          setFormError(res ? res.error : "Could not reach the server. Check your connection and try again.");
+          return;
+        }
+        toast.success("Held installation deleted.");
+        allowLeave.current = true;
+        router.push("/my-jobs");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (!window.confirm("Clear everything you filled in on this form?")) return;
     reset();
     setErrors({});

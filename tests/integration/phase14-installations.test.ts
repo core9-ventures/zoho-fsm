@@ -282,6 +282,14 @@ describe("hold", () => {
       ...over,
     });
 
+  it("a technician can delete their own held record, but not a completed one", async () => {
+    const r = await installationsService.hold(dbA, techA, holdInput());
+    await installationsService.discardHeld(dbA, techA, r.id);
+    await expect(installationsService.get(dbA, techA, r.id)).rejects.toBeInstanceOf(NotFoundError);
+    const done = await make();
+    await expect(installationsService.discardHeld(dbA, techA, done)).rejects.toBeInstanceOf(ConflictError);
+  });
+
   it("needs a reason to hold", () => {
     expect(holdInstallationSchema.safeParse({ ...holdInput(), holdReason: "   " }).success).toBe(false);
   });

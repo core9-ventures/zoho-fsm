@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { dbFor, requirePermission, requireRole, requireUser } from "@/lib/auth";
 import { installationListQuerySchema, installationsService } from "@/modules/installations";
 
-export const metadata: Metadata = { title: "My installations" };
+export const metadata: Metadata = { title: "Completed installations" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -18,14 +18,14 @@ export default async function MyInstallationsPage({ searchParams }: { searchPara
   const user = await requireUser();
   requireRole(user, ["TECHNICIAN"]);
   requirePermission(user, "field:view");
-  const q = installationListQuerySchema.parse({ pageSize: 15, ...sp });
+  const q = installationListQuerySchema.parse({ pageSize: 15, ...sp, status: "COMPLETED" });
   const result = await installationsService.list(dbFor(user), user, q);
 
   return (
     <div className="space-y-4">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">My installations</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Completed installations</h1>
           <p className="text-muted-foreground text-sm">{result.totalCount} recorded by you.</p>
         </div>
         <Button asChild size="sm">

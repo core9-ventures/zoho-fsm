@@ -356,6 +356,12 @@ export const installationsService = {
     await db.attachment.delete({ where: { id: attachmentId } });
   },
 
+  /** A technician throws away their own held record ("Clear all" on a held form). */
+  async discardHeld(db: AppDb, actor: CurrentUser, id: string) {
+    await heldMineOrThrow(db, actor, id);
+    await db.installation.delete({ where: { id } });
+  },
+
   async remove(db: AppDb, id: string) {
     const row = await db.installation.findFirst({ where: { id }, select: { id: true } });
     if (!row) throw new NotFoundError("Installation", id);

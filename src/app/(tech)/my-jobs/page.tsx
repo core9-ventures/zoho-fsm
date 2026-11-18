@@ -135,7 +135,7 @@ export default async function MyJobsPage() {
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h2 className="text-muted-foreground text-sm font-semibold">
-            My installations{installs.totalCount > 0 ? ` (${installs.totalCount})` : ""}
+            Completed installations{installs.totalCount > 0 ? ` (${installs.totalCount})` : ""}
           </h2>
           {installs.totalCount > installs.items.length && (
             <Link href="/my-installations" className="text-primary text-sm font-medium">

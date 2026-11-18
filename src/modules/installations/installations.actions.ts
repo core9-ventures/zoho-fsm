@@ -48,6 +48,17 @@ export async function completeInstallationAction(id: string, input: Installation
   return res;
 }
 
+/** A technician deletes their own held installation. */
+export async function discardHeldInstallationAction(id: string) {
+  const res = await runAction(
+    { roles: FIELD, permission: "field:create", input: z.object({ id: idParam }) },
+    { id },
+    ({ db, user, input }) => installationsService.discardHeld(db, user, input.id),
+  );
+  if (res.ok) revalidatePath("/installations", "layout");
+  return res;
+}
+
 /** A technician removes a photo of an installation that is on hold. */
 export async function deleteMyInstallationFileAction(id: string, attachmentId: string) {
   return runAction(

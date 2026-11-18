@@ -387,13 +387,35 @@ function SlotCell({
     refresh();
   };
 
-  const bar = "flex size-6 items-center justify-center rounded text-white hover:bg-white/25 disabled:opacity-60";
+  const bar = big
+    ? "flex h-8 w-12 items-center justify-center rounded text-white hover:bg-white/25 disabled:opacity-60"
+    : "flex size-6 items-center justify-center rounded text-white hover:bg-white/25 disabled:opacity-60";
+  const barIcon = big ? "size-6" : "size-3.5";
   const CELL = big ? "h-16 w-full" : "size-[4.5rem]";
 
+  const retakeBtn = (
+    <button type="button" className={bar} aria-label={`Retake ${name}`} disabled={busy} onClick={pick}>
+      {busy ? <Loader2 className={cn(barIcon, "animate-spin")} /> : <RefreshCw className={barIcon} />}
+    </button>
+  );
+  const removeBtn =
+    item && (c.canDeleteAny || item.authorId === c.meId) ? (
+      <button type="button" className={bar} aria-label={`Remove ${name}`} onClick={remove}>
+        <Trash2 className={barIcon} />
+      </button>
+    ) : null;
+
   return (
-    <div className="flex justify-center">
+    <div className={cn("flex", big && item && !c.closed ? "items-center gap-2" : "justify-center")}>
+      {/* Big boxes keep Retake and Remove in a column to the left of the photo. */}
+      {big && item && !c.closed && (
+        <div className="bg-muted/60 flex shrink-0 flex-col items-center rounded-md border [&_button]:text-foreground [&_button]:hover:bg-foreground/10">
+          {withChoice(retakeBtn)}
+          {removeBtn}
+        </div>
+      )}
       {item ? (
-        <div className={cn(CELL, "relative overflow-hidden rounded-md border")}>
+        <div className={cn(CELL, "relative overflow-hidden rounded-md border", big && "min-w-0 flex-1")}>
           <a
             href={urlOf(c.api, item.id)}
             target="_blank"
@@ -417,18 +439,10 @@ function SlotCell({
               <img src={urlOf(c.api, item.id, true)} alt={name} className="size-full object-cover" loading="lazy" />
             )}
           </a>
-          {!c.closed && (
+          {!big && !c.closed && (
             <div className="absolute inset-x-0 bottom-0 flex justify-end gap-0.5 bg-black/55 px-0.5">
-              {withChoice(
-                <button type="button" className={bar} aria-label={`Retake ${name}`} disabled={busy} onClick={pick}>
-                  {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                </button>,
-              )}
-              {(c.canDeleteAny || item.authorId === c.meId) && (
-                <button type="button" className={bar} aria-label={`Remove ${name}`} onClick={remove}>
-                  <Trash2 className="size-3.5" />
-                </button>
-              )}
+              {withChoice(retakeBtn)}
+              {removeBtn}
             </div>
           )}
         </div>
