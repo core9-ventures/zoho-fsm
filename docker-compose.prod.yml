@@ -1,4 +1,4 @@
-# Production stack for a VPS: database, web, worker and Caddy (automatic HTTPS).
+# Production stack for a VPS: database, web and worker. Nginx on the host proxies to 127.0.0.1:3000.
 # Secrets live in .env next to this file (see .env.production.example).
 services:
   db:
@@ -25,6 +25,8 @@ services:
       db:
         condition: service_healthy
     env_file: .env
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
       - uploads:/data/uploads
 
@@ -39,21 +41,6 @@ services:
     volumes:
       - uploads:/data/uploads
 
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-    depends_on:
-      - web
-
 volumes:
   pgdata:
   uploads:
-  caddy_data:
