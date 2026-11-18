@@ -33,6 +33,7 @@ yarn-error.log*
 # env files (the example is committed; real secrets never are)
 .env*
 !.env.example
+!.env.production.example
 
 # uploaded files (local storage provider)
 /uploads
