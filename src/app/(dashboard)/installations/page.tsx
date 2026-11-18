@@ -4,6 +4,7 @@ import { ClickableRow } from "./clickable-row";
 import { Pagination } from "@/components/data-table/pagination";
 import { SearchInput } from "@/components/data-table/search-input";
 import { UrlSelect } from "@/components/data-table/url-select";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { dbFor, requirePagePermission, requireRole, requireUser } from "@/lib/auth";
@@ -41,6 +42,15 @@ export default async function InstallationsPage({ searchParams }: { searchParams
           allLabel="Any company"
           options={customers.map((c) => ({ value: c.id, label: c.name }))}
         />
+        <UrlSelect
+          param="status"
+          label="Status"
+          allLabel="Any status"
+          options={[
+            { value: "COMPLETED", label: "Completed" },
+            { value: "ON_HOLD", label: "On hold" },
+          ]}
+        />
       </div>
 
       <Card className="py-0">
@@ -53,13 +63,14 @@ export default async function InstallationsPage({ searchParams }: { searchParams
               <TableHead className="hidden lg:table-cell">Location</TableHead>
               <TableHead>Date</TableHead>
               <TableHead className="hidden md:table-cell">Technician</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead>Photos</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {result.items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-muted-foreground py-10 text-center">
+                <TableCell colSpan={8} className="text-muted-foreground py-10 text-center">
                   No installations yet.
                 </TableCell>
               </TableRow>
@@ -68,7 +79,7 @@ export default async function InstallationsPage({ searchParams }: { searchParams
               <ClickableRow key={i.id} href={`/installations/${i.id}`}>
                 <TableCell>
                   <Link href={`/installations/${i.id}`} className="font-medium hover:underline">
-                    {i.vehicleNo}
+                    {i.vehicleNo || "(no vehicle no.)"}
                   </Link>
                 </TableCell>
                 <TableCell className="text-sm">{i.customerName}</TableCell>
@@ -82,6 +93,15 @@ export default async function InstallationsPage({ searchParams }: { searchParams
                 <TableCell className="text-sm">{formatDay(i.installDate)}</TableCell>
                 <TableCell className="text-muted-foreground hidden text-sm md:table-cell">
                   {i.createdBy ?? "—"}
+                </TableCell>
+                <TableCell>
+                  {i.status === "ON_HOLD" ? (
+                    <Badge variant="outline" className="border-amber-500/60 text-amber-600">
+                      On hold
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary">Completed</Badge>
+                  )}
                 </TableCell>
                 <TableCell>
                   {i.fileCount === 0 ? (

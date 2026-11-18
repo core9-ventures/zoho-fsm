@@ -56,9 +56,10 @@ export default async function MyJobsPage() {
   requireRole(user, ["TECHNICIAN"]);
   requirePermission(user, "field:view");
   const db = dbFor(user);
-  const [{ today, jobs }, installs] = await Promise.all([
+  const [{ today, jobs }, installs, held] = await Promise.all([
     fieldService.myJobs(db, user),
-    installationsService.list(db, user, installationListQuerySchema.parse({ pageSize: 5 })),
+    installationsService.list(db, user, installationListQuerySchema.parse({ pageSize: 5, status: "COMPLETED" })),
+    installationsService.list(db, user, installationListQuerySchema.parse({ pageSize: 50, status: "ON_HOLD" })),
   ]);
 
   const finished = (j: FieldJob) => j.status === "COMPLETED" || j.status === "CLOSED" || j.status === "CANCELLED";
@@ -114,6 +115,20 @@ export default async function MyJobsPage() {
           {done.map((j) => (
             <JobCard key={j.workOrderId} job={j} />
           ))}
+        </section>
+      )}
+
+      {held.items.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-amber-600">On hold ({held.totalCount})</h2>
+          <p className="text-muted-foreground text-xs">Unfinished installations. Tap one to carry on.</p>
+          <ul className="space-y-2">
+            {held.items.map((i) => (
+              <li key={i.id}>
+                <InstallationCard i={i} />
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 

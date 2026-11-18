@@ -14,9 +14,11 @@ import { createDb, prismaBase, tenantContext, type AppDb } from "@/lib/db";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
 import {
   createInstallationSchema,
+  holdInstallationSchema,
   installationListQuerySchema,
   installationsService,
   INSTALLATION_CHECKLIST,
+  type HoldInstallationInput,
   type InstallationInput,
 } from "@/modules/installations";
 import { TINY_PNG } from "../helpers/images";
@@ -222,7 +224,7 @@ describe("photos and video", () => {
     await expect(installationsService.addFile(dbB, techB, id, photo(1))).rejects.toBeInstanceOf(NotFoundError);
     const f = await installationsService.addFile(dbA, techA, id, photo(1));
     await expect(installationsService.removeFile(dbB, techB, id, f.id)).rejects.toBeInstanceOf(NotFoundError);
-    await installationsService.removeFile(dbA, techA, id, f.id);
+    await installationsService.removeFile(db, dispatcher, id, f.id);
     expect((await installationsService.get(dbA, techA, id)).photos).toHaveLength(0);
   });
 
@@ -258,5 +260,98 @@ describe("unique device", () => {
     await installationsService.update(db, id, input({ deviceId: device, notes: "same device" }));
     await installationsService.remove(db, id);
     await make(techA, dbA, { deviceId: device });
+  });
+});
+
+describe("hold", () => {
+  const holdInput = (over: Partial<Record<keyof HoldInstallationInput, unknown>> = {}) =>
+    holdInstallationSchema.parse({
+      customerId: "",
+      vehicleNo: "",
+      deviceId: "",
+      simNo: "",
+      installDate: "2026-11-04",
+      location: "",
+      latitude: "",
+      longitude: "",
+      deviceType: "",
+      hasTempSensor: false,
+      checklist: [],
+      notes: "",
+      holdReason: "Waiting for the customer",
+      ...over,
+    });
+
+  it("needs a reason to hold", () => {
+    expect(holdInstallationSchema.safeParse({ ...holdInput(), holdReason: "   " }).success).toBe(false);
+  });
+
+  it("accepts a completely empty form", async () => {
+    const r = await installationsService.hold(dbA, techA, holdInput());
+    ids.push(r.id);
+    const got = await installationsService.get(dbA, techA, r.id);
+    expect(got.status).toBe("ON_HOLD");
+    expect(got.holdReason).toBe("Waiting for the customer");
+    expect(got.customerId).toBeNull();
+    expect(got.vehicleNo).toBe("");
+  });
+
+  it("keeps what was filled in, and appears in the held list of its technician only", async () => {
+    const r = await installationsService.hold(
+      dbA,
+      techA,
+      holdInput({ customerId, vehicleNo: ` hold-${stamp} `, notes: "half done" }),
+    );
+    ids.push(r.id);
+    const mine = await installationsService.list(dbA, techA, installationListQuerySchema.parse({ status: "ON_HOLD" }));
+    expect(mine.items.map((i) => i.id)).toContain(r.id);
+    const others = await installationsService.list(dbB, techB, installationListQuerySchema.parse({ status: "ON_HOLD" }));
+    expect(others.items.map((i) => i.id)).not.toContain(r.id);
+    const done = await installationsService.list(dbA, techA, installationListQuerySchema.parse({ status: "COMPLETED" }));
+    expect(done.items.map((i) => i.id)).not.toContain(r.id);
+    await expect(installationsService.get(dbB, techB, r.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("can be held again, then completed; completing checks every required field", async () => {
+    const r = await installationsService.hold(dbA, techA, holdInput({ vehicleNo: `again-${stamp}` }));
+    ids.push(r.id);
+    await installationsService.hold(dbA, techA, holdInput({ vehicleNo: `again-${stamp}`, notes: "second save" }), r.id);
+    expect((await installationsService.get(dbA, techA, r.id)).notes).toBe("second save");
+
+    // The form refuses to complete without the required fields.
+    expect(createInstallationSchema.safeParse({ ...holdInput(), customerId: "" }).success).toBe(false);
+
+    await installationsService.completeHeld(dbA, techA, r.id, input({ vehicleNo: `again-${stamp}` }));
+    const got = await installationsService.get(dbA, techA, r.id);
+    expect(got.status).toBe("COMPLETED");
+    expect(got.customerId).toBe(customerId);
+  });
+
+  it("a completed record can no longer be held, completed again or have its photos removed by the technician", async () => {
+    const id = await make(techA, dbA);
+    await expect(installationsService.hold(dbA, techA, holdInput(), id)).rejects.toBeInstanceOf(ConflictError);
+    await expect(installationsService.completeHeld(dbA, techA, id, input())).rejects.toBeInstanceOf(ConflictError);
+    const file = await installationsService.addFile(dbA, techA, id, photo(1), { slot: "FRONT" });
+    await expect(installationsService.removeFile(dbA, techA, id, file.id)).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("a held record keeps its photos and lets the technician remove one", async () => {
+    const r = await installationsService.hold(dbA, techA, holdInput());
+    ids.push(r.id);
+    const file = await installationsService.addFile(dbA, techA, r.id, photo(2), { slot: "FRONT" });
+    expect((await installationsService.get(dbA, techA, r.id)).files).toHaveLength(1);
+    await installationsService.removeFile(dbA, techA, r.id, file.id);
+    expect((await installationsService.get(dbA, techA, r.id)).files).toHaveLength(0);
+  });
+
+  it("refuses to hold with a Device ID that is already installed, but an empty one is fine", async () => {
+    const device = `HOLDDEV-${stamp}`;
+    await make(techA, dbA, { deviceId: device });
+    await expect(installationsService.hold(dbB, techB, holdInput({ deviceId: device }))).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+    const a = await installationsService.hold(dbB, techB, holdInput());
+    const b = await installationsService.hold(dbB, techB, holdInput());
+    ids.push(a.id, b.id);
   });
 });

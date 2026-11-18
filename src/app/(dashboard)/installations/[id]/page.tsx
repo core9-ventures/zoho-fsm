@@ -41,7 +41,17 @@ export default async function InstallationPage({ params }: { params: Promise<{ i
         <ArrowLeft className="size-4" /> Installations
       </Link>
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{i.vehicleNo}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {i.vehicleNo || "(no vehicle no.)"}
+          {i.status === "ON_HOLD" && (
+            <span className="ml-3 rounded-md border border-amber-500/60 px-2 py-0.5 align-middle text-sm font-normal text-amber-600">
+              On hold
+            </span>
+          )}
+        </h1>
+        {i.status === "ON_HOLD" && i.holdReason && (
+          <p className="text-sm text-amber-600">On hold because: {i.holdReason}</p>
+        )}
         <p className="text-muted-foreground text-sm">
           {i.customerName} · {formatDay(i.installDate)}
           {i.createdBy ? ` · recorded by ${i.createdBy}` : ""}

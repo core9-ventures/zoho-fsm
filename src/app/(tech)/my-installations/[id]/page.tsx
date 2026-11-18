@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { ReadOnlyPhotos } from "./read-only-photos";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,8 @@ export default async function MyInstallationPage({ params }: { params: Promise<{
     if (e instanceof NotFoundError) notFound();
     throw e;
   }
+  // Unfinished records are finished on the form, not read here.
+  if (i.status === "ON_HOLD") redirect(`/new-installation/${id}`);
   const map =
     i.latitude != null && i.longitude != null
       ? `https://www.openstreetmap.org/?mlat=${i.latitude}&mlon=${i.longitude}#map=17/${i.latitude}/${i.longitude}`

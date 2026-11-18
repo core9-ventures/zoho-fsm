@@ -3,10 +3,12 @@ import { Prisma } from "@prisma/client";
 import type {
   CustomerChoice,
   SiteChoice,
+  HoldInstallationInput,
   InstallationDetail,
   InstallationInput,
   InstallationListItem,
   InstallationListQuery,
+  InstallationStatus,
 } from "./installations.schema";
 import type { CurrentUser } from "@/lib/auth";
 import type { AppDb } from "@/lib/db";
@@ -52,10 +54,20 @@ function mediaOf(a: {
 }
 
 async function mineOrThrow(db: AppDb, actor: CurrentUser, id: string) {
-  const row = await db.installation.findFirst({ where: { id }, select: { id: true, createdById: true } });
+  const row = await db.installation.findFirst({ where: { id }, select: { id: true, createdById: true, status: true } });
   // A technician sees only the installations they recorded.
   if (!row || (actor.role === "TECHNICIAN" && row.createdById !== actor.id))
     throw new NotFoundError("Installation", id);
+  return row;
+}
+
+/** A technician finishes or changes only a record that is still on hold. */
+async function heldMineOrThrow(db: AppDb, actor: CurrentUser, id: string) {
+  const row = await mineOrThrow(db, actor, id);
+  if (row.status !== "ON_HOLD") {
+    const message = "This installation is already completed.";
+    throw new ConflictError(message, { form: [message] });
+  }
   return row;
 }
 
@@ -66,6 +78,7 @@ async function customerOrThrow(db: AppDb, customerId: string) {
 
 /** A device can be installed once: refuse a Device ID that another (not deleted) installation already uses. */
 async function deviceFreeOrThrow(db: AppDb, deviceId: string, exceptId?: string) {
+  if (!deviceId.trim()) return;
   const used = await db.installation.findFirst({
     where: {
       deviceId: { equals: deviceId.trim(), mode: "insensitive" },
@@ -78,9 +91,9 @@ async function deviceFreeOrThrow(db: AppDb, deviceId: string, exceptId?: string)
   throw new ConflictError(message, { deviceId: [message] });
 }
 
-function dataOf(input: InstallationInput) {
+function dataOf(input: InstallationInput | HoldInstallationInput) {
   return {
-    customerId: input.customerId,
+    customerId: input.customerId || null,
     vehicleNo: input.vehicleNo.toUpperCase(),
     deviceId: input.deviceId,
     simNo: nullIfEmpty(input.simNo),
@@ -124,6 +137,32 @@ export const installationsService = {
     return customers.map((c) => ({ ...c, sites: sites.get(c.id) ?? [] }));
   },
 
+  /**
+   * Saves a half-finished installation as ON_HOLD: nothing is required. With an id the technician's own held
+   * record is updated; without one a new held record is created.
+   */
+  async hold(db: AppDb, actor: CurrentUser, input: HoldInstallationInput, id?: string): Promise<{ id: string }> {
+    const companyId = companyOf(actor);
+    if (id) await heldMineOrThrow(db, actor, id);
+    if (input.customerId) await customerOrThrow(db, input.customerId);
+    await deviceFreeOrThrow(db, input.deviceId, id);
+    const data = { ...dataOf(input), holdReason: input.holdReason };
+    if (id) return db.installation.update({ where: { id }, data, select: { id: true } });
+    return db.installation.create({ data: { companyId, ...data, status: "ON_HOLD" }, select: { id: true } });
+  },
+
+  /** The technician finishes a held record: everything is checked, then it becomes COMPLETED. */
+  async completeHeld(db: AppDb, actor: CurrentUser, id: string, input: InstallationInput): Promise<{ id: string }> {
+    await heldMineOrThrow(db, actor, id);
+    await customerOrThrow(db, input.customerId);
+    await deviceFreeOrThrow(db, input.deviceId, id);
+    return db.installation.update({
+      where: { id },
+      data: { ...dataOf(input), status: "COMPLETED", holdReason: null },
+      select: { id: true },
+    });
+  },
+
   async create(db: AppDb, actor: CurrentUser, input: InstallationInput): Promise<{ id: string }> {
     const companyId = companyOf(actor);
     await customerOrThrow(db, input.customerId);
@@ -144,6 +183,7 @@ export const installationsService = {
     const where: Prisma.InstallationWhereInput = {
       ...(actor.role === "TECHNICIAN" ? { createdById: actor.id } : {}),
       ...(q.customerId ? { customerId: q.customerId } : {}),
+      ...(q.status ? { status: q.status } : {}),
       ...(q.from || q.to
         ? {
             installDate: {
@@ -191,12 +231,14 @@ export const installationsService = {
         id: r.id,
         vehicleNo: r.vehicleNo,
         deviceId: r.deviceId,
-        customerName: r.customer.name,
+        customerName: r.customer?.name ?? "",
         deviceType: r.deviceType,
         location: r.location,
         installDate: day(r.installDate),
         createdBy: r.createdById ? (nameOf.get(r.createdById) ?? null) : null,
         createdAt: r.createdAt.toISOString(),
+        status: r.status as InstallationStatus,
+        holdReason: r.holdReason ?? "",
         fileCount: (byId.get(r.id) ?? []).length,
         thumbs: (byId.get(r.id) ?? [])
           .filter((p) => p.kind === "PHOTO")
@@ -226,12 +268,14 @@ export const installationsService = {
       customerId: r.customerId,
       vehicleNo: r.vehicleNo,
       deviceId: r.deviceId,
-      customerName: r.customer.name,
+      customerName: r.customer?.name ?? "",
       deviceType: r.deviceType,
       location: r.location,
       installDate: day(r.installDate),
       createdBy: author?.fullName ?? null,
       createdAt: r.createdAt.toISOString(),
+      status: r.status as InstallationStatus,
+      holdReason: r.holdReason ?? "",
       simNo: r.simNo,
       latitude: num(r.latitude),
       longitude: num(r.longitude),
@@ -304,7 +348,9 @@ export const installationsService = {
   },
 
   async removeFile(db: AppDb, actor: CurrentUser, id: string, attachmentId: string) {
-    await mineOrThrow(db, actor, id);
+    // A technician can take a photo away only while the record is on hold; the office can always.
+    if (actor.role === "TECHNICIAN") await heldMineOrThrow(db, actor, id);
+    else await mineOrThrow(db, actor, id);
     const a = await db.attachment.findFirst({ where: { id: attachmentId, entityType: ENTITY, entityId: id } });
     if (!a) throw new NotFoundError("Attachment", attachmentId);
     await db.attachment.delete({ where: { id: attachmentId } });

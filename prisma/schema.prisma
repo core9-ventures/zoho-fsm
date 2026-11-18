@@ -983,8 +983,8 @@ model Installation {
   id            String    @id @default(cuid())
   companyId     String
   company       Company   @relation(fields: [companyId], references: [id])
-  customerId    String
-  customer      Customer  @relation(fields: [customerId], references: [id])
+  customerId    String?
+  customer      Customer? @relation(fields: [customerId], references: [id])
   vehicleNo     String
   deviceId      String
   simNo         String?
@@ -998,6 +998,10 @@ model Installation {
   /// The service checklist items that were ticked.
   checklist     String[]  @default([])
   notes         String?
+  /// COMPLETED, or ON_HOLD while a technician has not finished it (several fields may still be empty).
+  status        String    @default("COMPLETED")
+  /// Why the technician put it on hold (cleared when it is completed).
+  holdReason    String?
   createdAt     DateTime  @default(now()) @db.Timestamptz(3)
   createdById   String?
   updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
@@ -1007,4 +1011,5 @@ model Installation {
   @@index([companyId, installDate])
   @@index([companyId, vehicleNo])
   @@index([companyId, customerId])
+  @@index([companyId, status])
 }

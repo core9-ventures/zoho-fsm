@@ -34,7 +34,7 @@ export function InstallationEditor({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [customerId, setCustomerId] = useState(i.customerId);
+  const [customerId, setCustomerId] = useState(i.customerId ?? "");
   const [vehicleNo, setVehicleNo] = useState(i.vehicleNo);
   const [deviceId, setDeviceId] = useState(i.deviceId);
   const [simNo, setSimNo] = useState(i.simNo ?? "");

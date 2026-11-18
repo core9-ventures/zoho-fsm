@@ -55,6 +55,11 @@ export const isInstallationSlot = (key: string) =>
 /** The one optional video of an installation is at most this long. */
 export const INSTALLATION_VIDEO_SECONDS = 10;
 
+/** An installation is COMPLETED, or ON_HOLD while the technician has not finished it. */
+export const INSTALLATION_STATUSES = ["COMPLETED", "ON_HOLD"] as const;
+export type InstallationStatus = (typeof INSTALLATION_STATUSES)[number];
+export const STATUS_LABEL: Record<InstallationStatus, string> = { COMPLETED: "Completed", ON_HOLD: "On hold" };
+
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-11-04.")
@@ -82,8 +87,36 @@ export const createInstallationSchema = z
   });
 export type InstallationInput = z.infer<typeof createInstallationSchema>;
 
+/**
+ * Put on hold: the same fields, but nothing is required (a technician can pause a half-filled form).
+ * Everything is checked again when the record is completed.
+ */
+export const holdInstallationSchema = z
+  .object({
+    customerId: z.union([z.literal(""), idParam]),
+    vehicleNo: z.string().trim().max(30),
+    deviceId: z.string().trim().max(60),
+    simNo: optionalText(30).regex(/^[0-9+\-\s()]*$/, "Use digits, spaces, + and - only."),
+    installDate: day,
+    location: z.string().trim().max(200),
+    latitude: latitudeText,
+    longitude: longitudeText,
+    deviceType: z.union([z.literal(""), z.enum(DEVICE_TYPES)]),
+    hasTempSensor: z.boolean(),
+    checklist: z.array(z.enum(INSTALLATION_CHECKLIST)).max(INSTALLATION_CHECKLIST.length),
+    notes: optionalText(2000),
+    /** Why the record is put on hold; required. */
+    holdReason: z.string().trim().min(1, "Tell us why you are putting it on hold.").max(300),
+  })
+  .refine((v) => (v.latitude === "") === (v.longitude === ""), {
+    message: "Give both latitude and longitude, or neither.",
+    path: ["latitude"],
+  });
+export type HoldInstallationInput = z.infer<typeof holdInstallationSchema>;
+
 export const installationListQuerySchema = pagedQuerySchema.pick({ page: true, pageSize: true, search: true }).extend({
   customerId: idParam.optional(),
+  status: z.enum(INSTALLATION_STATUSES).optional(),
   from: day.optional(),
   to: day.optional(),
 });
@@ -99,6 +132,9 @@ export type InstallationListItem = {
   installDate: string;
   createdBy: string | null;
   createdAt: string;
+  status: InstallationStatus;
+  /** Why it is on hold (empty when it is not). */
+  holdReason: string;
   /** Photos and videos attached so far. */
   fileCount: number;
   /** Ids of the first few photos, shown as small previews in the list. */
@@ -106,7 +142,7 @@ export type InstallationListItem = {
 };
 
 export type InstallationDetail = Omit<InstallationListItem, "fileCount" | "thumbs"> & {
-  customerId: string;
+  customerId: string | null;
   simNo: string | null;
   latitude: number | null;
   longitude: number | null;

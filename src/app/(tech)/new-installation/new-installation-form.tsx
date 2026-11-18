@@ -1,20 +1,36 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, Loader2, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, ChevronDown, Eraser, Loader2, PauseCircle, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { Field, NativeSelect } from "@/components/forms/field";
 import { LocationField } from "@/components/forms/location-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { createInstallationAction } from "@/modules/installations/installations.actions";
+import {
+  completeInstallationAction,
+  createInstallationAction,
+  holdInstallationAction,
+} from "@/modules/installations/installations.actions";
 import {
   DEVICE_TYPES,
   INSTALLATION_CHECKLIST as CHECKLIST,
   type CustomerChoice,
+  type InstallationDetail,
 } from "@/modules/installations/installations.schema";
+import { HeldPhotos } from "./held-photos";
 import { InstallationPhotos, type PendingFile } from "./installation-photos";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -33,23 +49,34 @@ const SERVER_FIELD: Record<string, FieldKey> = {
   simNo: "simNo",
 };
 
-export function NewInstallationForm({ customers }: { customers: CustomerChoice[] }) {
-  const [vehicleNo, setVehicleNo] = useState("");
-  const [deviceId, setDeviceId] = useState("");
-  const [company, setCompany] = useState("");
-  const [date, setDate] = useState(today());
-  const [location, setLocation] = useState("");
-  const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
-  const [deviceType, setDeviceType] = useState("");
-  const [simNo, setSimNo] = useState("");
-  const [checked, setChecked] = useState<string[]>([...CHECKLIST]);
-  const [notes, setNotes] = useState("");
+/**
+ * The new installation form. With `held` it carries on with a record that was put on hold: the fields are
+ * filled in, its photos are already saved, and Add Record completes that same record.
+ */
+export function NewInstallationForm({ customers, held }: { customers: CustomerChoice[]; held?: InstallationDetail }) {
+  const router = useRouter();
+  const [vehicleNo, setVehicleNo] = useState(held?.vehicleNo ?? "");
+  const [deviceId, setDeviceId] = useState(held?.deviceId ?? "");
+  const [company, setCompany] = useState(held?.customerId ?? "");
+  const [date, setDate] = useState(held?.installDate ?? today());
+  const [location, setLocation] = useState(held?.location ?? "");
+  const [pin, setPin] = useState<{ lat: number; lng: number } | null>(
+    held?.latitude != null && held?.longitude != null ? { lat: held.latitude, lng: held.longitude } : null,
+  );
+  const [deviceType, setDeviceType] = useState(held?.deviceType ?? "");
+  const [simNo, setSimNo] = useState(held?.simNo ?? "");
+  const [checked, setChecked] = useState<string[]>(held ? held.checklist : [...CHECKLIST]);
+  const [notes, setNotes] = useState(held?.notes ?? "");
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [added, setAdded] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [photosKey, setPhotosKey] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [photoCount, setPhotoCount] = useState(0);
+  const [holdOpen, setHoldOpen] = useState(false);
+  const [reason, setReason] = useState(held?.holdReason ?? "");
+  const [reasonError, setReasonError] = useState("");
   const files = useRef<{ list: PendingFile[]; temp: boolean }>({ list: [], temp: false });
 
   const toggle = (item: string, on: boolean) =>
@@ -69,7 +96,140 @@ export function NewInstallationForm({ customers }: { customers: CustomerChoice[]
     setSimNo("");
     setChecked([...CHECKLIST]);
     setNotes("");
+    setReason("");
     setPhotosKey((k) => k + 1);
+  }
+
+  /** Empties every field (and the photos of a new form). The photos of a held record stay saved. */
+  function clearAll() {
+    if (!window.confirm("Clear everything you filled in on this form?")) return;
+    reset();
+    setErrors({});
+    setFormError(null);
+    setAdded(null);
+    setWarning(null);
+  }
+
+  const values = () => ({
+    vehicleNo,
+    deviceId,
+    simNo,
+    installDate: date,
+    location,
+    latitude: pin ? pin.lat.toFixed(6) : "",
+    longitude: pin ? pin.lng.toFixed(6) : "",
+    hasTempSensor: files.current.temp,
+    checklist: checked as (typeof CHECKLIST)[number][],
+    notes,
+  });
+
+  // ---- Leaving the page with unsaved information: ask to hold it (or discard) first. ----
+  const snapshot = JSON.stringify([vehicleNo, deviceId, company, date, location, pin, deviceType, simNo, checked, notes]);
+  const initialSnapshot = useRef<string | null>(null);
+  if (initialSnapshot.current === null) initialSnapshot.current = snapshot;
+  const dirty = snapshot !== initialSnapshot.current || photoCount > 0;
+  /** Where the technician was heading: a link, or "back" for the browser/phone back button. */
+  const pending = useRef<string | null>(null);
+  const allowLeave = useRef(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const onUnload = (e: BeforeUnloadEvent) => {
+      if (allowLeave.current) return;
+      e.preventDefault();
+    };
+    const onClick = (e: MouseEvent) => {
+      if (allowLeave.current || e.defaultPrevented || e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
+      const url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname + url.search === window.location.pathname + window.location.search) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pending.current = url.pathname + url.search + url.hash;
+      setLeaveOpen(true);
+    };
+    // One extra history entry lets the back button be caught without leaving the page.
+    window.history.pushState(null, "", window.location.href);
+    const onPop = () => {
+      if (allowLeave.current) return;
+      window.history.pushState(null, "", window.location.href);
+      pending.current = "back";
+      setLeaveOpen(true);
+    };
+    window.addEventListener("beforeunload", onUnload);
+    window.addEventListener("popstate", onPop);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("beforeunload", onUnload);
+      window.removeEventListener("popstate", onPop);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, [dirty]);
+
+  /** Goes where the technician was heading (or to My jobs). */
+  function goOn() {
+    allowLeave.current = true;
+    const to = pending.current;
+    pending.current = null;
+    if (to === "back") window.history.go(-2);
+    else router.push(to ?? "/my-jobs");
+  }
+
+  /** Saves the form as it is (nothing required) so the technician can come back to it from My jobs. */
+  async function hold() {
+    if (busy) return;
+    const holdReason = reason.trim();
+    if (!holdReason) {
+      setReasonError("Please give a reason.");
+      return;
+    }
+    setReasonError("");
+    setBusy(true);
+    setErrors({});
+    setFormError(null);
+    setWarning(null);
+    try {
+      let res: Awaited<ReturnType<typeof holdInstallationAction>>;
+      try {
+        res = await holdInstallationAction(held?.id ?? null, {
+          ...values(),
+          holdReason,
+          customerId: company,
+          deviceType: deviceType as (typeof DEVICE_TYPES)[number] | "",
+        });
+      } catch {
+        setFormError("Could not reach the server. Check your connection and try again.");
+        return;
+      }
+      if (!res.ok) {
+        const server: Errors = {};
+        for (const [k, msgs] of Object.entries(res.fieldErrors ?? {})) {
+          const f = SERVER_FIELD[k];
+          if (f && msgs[0]) server[f] = msgs[0];
+        }
+        setErrors(server);
+        setFormError(res.error);
+        return;
+      }
+      if (held) {
+        toast.success("Put on hold.");
+        goOn();
+        return;
+      }
+      let failed = 0;
+      for (const f of files.current.list) if (!(await upload(res.data.id, f))) failed++;
+      if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be uploaded to the held record.`);
+      toast.success("Put on hold. Find it under On hold on My jobs.");
+      reset();
+      goOn();
+    } finally {
+      setBusy(false);
+      setHoldOpen(false);
+    }
   }
 
   async function upload(id: string, f: PendingFile) {
@@ -101,20 +261,8 @@ export function NewInstallationForm({ customers }: { customers: CustomerChoice[]
     try {
       let res: Awaited<ReturnType<typeof createInstallationAction>>;
       try {
-        res = await createInstallationAction({
-          customerId: company,
-          vehicleNo,
-          deviceId,
-          simNo,
-          installDate: date,
-          location,
-          latitude: pin ? pin.lat.toFixed(6) : "",
-          longitude: pin ? pin.lng.toFixed(6) : "",
-          deviceType: deviceType as (typeof DEVICE_TYPES)[number],
-          hasTempSensor: files.current.temp,
-          checklist: checked as (typeof CHECKLIST)[number][],
-          notes,
-        });
+        const input = { ...values(), customerId: company, deviceType: deviceType as (typeof DEVICE_TYPES)[number] };
+        res = held ? await completeInstallationAction(held.id, input) : await createInstallationAction(input);
       } catch {
         // The server restarted or the sign-in ended while saving; nothing was lost on the form.
         setFormError(
@@ -132,6 +280,11 @@ export function NewInstallationForm({ customers }: { customers: CustomerChoice[]
         setErrors(server);
         setFormError(res.error);
         setAdded(null);
+        return;
+      }
+      if (held) {
+        toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved.`);
+        router.push("/my-jobs");
         return;
       }
       let failed = 0;
@@ -283,12 +436,17 @@ export function NewInstallationForm({ customers }: { customers: CustomerChoice[]
         )}
       </Card>
 
-      <InstallationPhotos
-        key={photosKey}
-        onChange={(list, temp) => {
-          files.current = { list, temp };
-        }}
-      />
+      {held ? (
+        <HeldPhotos id={held.id} files={held.files} photos={held.photos} />
+      ) : (
+        <InstallationPhotos
+          key={photosKey}
+          onChange={(list, temp) => {
+            files.current = { list, temp };
+            setPhotoCount(list.length);
+          }}
+        />
+      )}
 
       <Field label="Notes" htmlFor="notes">
         <Textarea
@@ -304,6 +462,88 @@ export function NewInstallationForm({ customers }: { customers: CustomerChoice[]
         {busy && <Loader2 className="animate-spin" />}
         {busy ? "Saving…" : "Add Record"}
       </Button>
+      <div className="grid grid-cols-2 gap-2">
+        <Button type="button" variant="outline" onClick={() => {
+            pending.current = null;
+            setHoldOpen(true);
+          }}
+          disabled={busy}
+        >
+          <PauseCircle /> Hold
+        </Button>
+        <Button type="button" variant="outline" onClick={clearAll} disabled={busy}>
+          <Eraser /> Clear all
+        </Button>
+      </div>
+      <p className="text-muted-foreground text-center text-xs">
+        Hold saves what you filled in so far. Find it under On hold on My jobs and carry on later.
+      </p>
+
+      <Dialog open={leaveOpen} onOpenChange={setLeaveOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Leave this installation?</DialogTitle>
+            <DialogDescription>
+              You have information that is not saved. Finish it and press Add Record, put it on hold to carry on
+              later, or leave and lose it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                pending.current = null;
+                setLeaveOpen(false);
+              }}
+            >
+              Keep editing
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="text-destructive"
+              onClick={() => {
+                setLeaveOpen(false);
+                goOn();
+              }}
+            >
+              Leave without saving
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setLeaveOpen(false);
+                setHoldOpen(true);
+              }}
+            >
+              Put on hold
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={holdOpen} onOpenChange={(o) => !busy && setHoldOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Put this installation on hold</DialogTitle>
+            <DialogDescription>
+              Tell the office why, for example waiting for the customer or the device is not available.
+            </DialogDescription>
+          </DialogHeader>
+          <Field label="Reason" htmlFor="hold-reason" error={reasonError}>
+            <Textarea id="hold-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={busy} onClick={() => setHoldOpen(false)}>
+              Back
+            </Button>
+            <Button type="button" disabled={busy} onClick={hold}>
+              {busy && <Loader2 className="animate-spin" />} Put on hold
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }
