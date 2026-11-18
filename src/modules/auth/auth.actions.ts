@@ -33,9 +33,9 @@ export async function changePasswordAction(
   }
 }
 
-export type LoginState = { error?: string; fieldErrors?: Partial<Record<"email" | "password", string[]>> };
+export type LoginState = { redirectTo?: string; error?: string; fieldErrors?: Partial<Record<"email" | "password", string[]>> };
 
-/** Login form submit (web). On success Auth.js redirects to "/", which forwards to the role's home. */
+/** Login form submit (web). On success the form loads "/" (or the callback URL) as a new page, and middleware forwards it to the role home. */
 export async function loginAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const parsed = loginSchema.safeParse({ email: formData.get("email"), password: formData.get("password") });
   if (!parsed.success) return { fieldErrors: parsed.error.flatten().fieldErrors };
@@ -44,14 +44,15 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
   const redirectTo = callbackUrl.startsWith("/") && !callbackUrl.startsWith("//") ? callbackUrl : "/";
 
   try {
-    await signIn("credentials", { ...parsed.data, redirectTo });
-    return {};
+    // No server redirect: the browser does a full page load (below), so its address bar ends up on the real page.
+    await signIn("credentials", { ...parsed.data, redirect: false });
+    return { redirectTo };
   } catch (err) {
     if (err instanceof AuthError) {
       const code = (err as AuthError & { code?: string }).code;
       if (code === "rate_limited") return { error: "Too many attempts. Wait a minute and try again." };
       return { error: "Invalid email or password." };
     }
-    throw err; // NEXT_REDIRECT on success
+    throw err;
   }
 }
