@@ -60,6 +60,13 @@ export const INSTALLATION_STATUSES = ["COMPLETED", "ON_HOLD"] as const;
 export type InstallationStatus = (typeof INSTALLATION_STATUSES)[number];
 export const STATUS_LABEL: Record<InstallationStatus, string> = { COMPLETED: "Completed", ON_HOLD: "On hold" };
 
+/** SIM phone number: optional; when given, digits with spaces, + - ( ) allowed and 10 to 15 digits in all. */
+const simNumber = optionalText(30)
+  .regex(/^[0-9+\-\s()]*$/, "Use digits, spaces, + and - only.")
+  .refine((s) => s === "" || (s.replace(/\D/g, "").length >= 10 && s.replace(/\D/g, "").length <= 15), {
+    message: "A SIM number has 10 to 15 digits.",
+  });
+
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-11-04.")
@@ -71,7 +78,7 @@ export const createInstallationSchema = z
     vehicleNo: requiredText(30, "Vehicle number"),
     deviceId: requiredText(60, "Device ID"),
     /** Phone number of the SIM; optional. */
-    simNo: optionalText(30).regex(/^[0-9+\-\s()]*$/, "Use digits, spaces, + and - only."),
+    simNo: simNumber,
     installDate: day,
     location: requiredText(200, "Location"),
     latitude: latitudeText,
@@ -96,7 +103,7 @@ export const holdInstallationSchema = z
     customerId: z.union([z.literal(""), idParam]),
     vehicleNo: z.string().trim().max(30),
     deviceId: z.string().trim().max(60),
-    simNo: optionalText(30).regex(/^[0-9+\-\s()]*$/, "Use digits, spaces, + and - only."),
+    simNo: simNumber,
     installDate: day,
     location: z.string().trim().max(200),
     latitude: latitudeText,

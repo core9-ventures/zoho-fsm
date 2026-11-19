@@ -91,6 +91,27 @@ async function deviceFreeOrThrow(db: AppDb, deviceId: string, exceptId?: string)
   throw new ConflictError(message, { deviceId: [message] });
 }
 
+/** A SIM card goes in one device: refuse a SIM number that another (not deleted) installation already uses. */
+async function simFreeOrThrow(db: AppDb, simNo: string, exceptId?: string) {
+  if (!simNo.trim()) return;
+  const used = await db.installation.findFirst({
+    where: {
+      simNo: { equals: simNo.trim(), mode: "insensitive" },
+      ...(exceptId ? { id: { not: exceptId } } : {}),
+    },
+    select: { vehicleNo: true, installDate: true },
+  });
+  if (!used) return;
+  const message = `SIM ${simNo.trim()} is already used on vehicle ${used.vehicleNo || "(no vehicle no.)"} (${day(used.installDate)}).`;
+  throw new ConflictError(message, { simNo: [message] });
+}
+
+/** Device ID and SIM number must each be unused. */
+async function uniqueOrThrow(db: AppDb, input: { deviceId: string; simNo: string }, exceptId?: string) {
+  await deviceFreeOrThrow(db, input.deviceId, exceptId);
+  await simFreeOrThrow(db, input.simNo, exceptId);
+}
+
 function dataOf(input: InstallationInput | HoldInstallationInput) {
   return {
     customerId: input.customerId || null,
@@ -145,8 +166,8 @@ export const installationsService = {
     const companyId = companyOf(actor);
     if (id) await heldMineOrThrow(db, actor, id);
     if (input.customerId) await customerOrThrow(db, input.customerId);
-    await deviceFreeOrThrow(db, input.deviceId, id);
-    const data = { ...dataOf(input), holdReason: input.holdReason };
+    await uniqueOrThrow(db, input, id);
+    const data ={ ...dataOf(input), holdReason: input.holdReason };
     if (id) return db.installation.update({ where: { id }, data, select: { id: true } });
     return db.installation.create({ data: { companyId, ...data, status: "ON_HOLD" }, select: { id: true } });
   },
@@ -155,7 +176,7 @@ export const installationsService = {
   async completeHeld(db: AppDb, actor: CurrentUser, id: string, input: InstallationInput): Promise<{ id: string }> {
     await heldMineOrThrow(db, actor, id);
     await customerOrThrow(db, input.customerId);
-    await deviceFreeOrThrow(db, input.deviceId, id);
+    await uniqueOrThrow(db, input, id);
     return db.installation.update({
       where: { id },
       data: { ...dataOf(input), status: "COMPLETED", holdReason: null },
@@ -166,7 +187,7 @@ export const installationsService = {
   async create(db: AppDb, actor: CurrentUser, input: InstallationInput): Promise<{ id: string }> {
     const companyId = companyOf(actor);
     await customerOrThrow(db, input.customerId);
-    await deviceFreeOrThrow(db, input.deviceId);
+    await uniqueOrThrow(db, input);
     return db.installation.create({ data: { companyId, ...dataOf(input) }, select: { id: true } });
   },
 
@@ -175,7 +196,7 @@ export const installationsService = {
     const row = await db.installation.findFirst({ where: { id }, select: { id: true } });
     if (!row) throw new NotFoundError("Installation", id);
     await customerOrThrow(db, input.customerId);
-    await deviceFreeOrThrow(db, input.deviceId, id);
+    await uniqueOrThrow(db, input, id);
     return db.installation.update({ where: { id }, data: dataOf(input), select: { id: true } });
   },
 

@@ -58,7 +58,7 @@ const input = (over: Partial<Record<keyof InstallationInput, unknown>> = {}) =>
     customerId,
     vehicleNo: ` jv-${stamp} `,
     deviceId: `DEV-${stamp}-${++seq}`,
-    simNo: "0300 1234567",
+    simNo: `03${String(stamp).replace(/\D/g, "").slice(-6).padStart(6, "0")}${String(seq).padStart(3, "0")}`,
     installDate: "2026-11-04",
     location: "Lahore",
     latitude: "",
@@ -241,6 +241,26 @@ describe("company sites", () => {
     const site = await owner.serviceAddress.findFirstOrThrow({ where: { companyId, deletedAt: null } });
     const company = options.find((o) => o.id === site.customerId)!;
     expect(company.sites.map((s) => s.id)).toContain(site.id);
+  });
+});
+
+describe("SIM format", () => {
+  it("is optional, but needs 10 to 15 digits when given", () => {
+    expect(createInstallationSchema.safeParse(input({ simNo: "" })).success).toBe(true);
+    for (const bad of ["123", "0300-123", "1234567890123456", "abc"]) {
+      expect(createInstallationSchema.safeParse({ ...input(), simNo: bad }).success).toBe(false);
+    }
+    expect(createInstallationSchema.safeParse({ ...input(), simNo: "+92 300 1234567" }).success).toBe(true);
+  });
+});
+
+describe("unique SIM", () => {
+  it("refuses a SIM number that is already used, but allows empty SIM numbers", async () => {
+    const sim = `0311${String(stamp).replace(/\D/g, "").slice(-7).padStart(7, "0")}`;
+    await make(techA, dbA, { simNo: sim });
+    await expect(make(techB, dbB, { simNo: ` ${sim} ` })).rejects.toBeInstanceOf(ConflictError);
+    await make(techA, dbA, { simNo: "" });
+    await make(techA, dbA, { simNo: "" });
   });
 });
 

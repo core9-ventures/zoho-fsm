@@ -270,6 +270,8 @@ export function NewInstallationForm({ customers, held }: { customers: CustomerCh
     if (!date) next.date = "Choose the date.";
     if (!location.trim()) next.location = "Enter the location.";
     if (!deviceType) next.deviceType = "Choose the device type.";
+    const simDigits = simNo.replace(/\D/g, "").length;
+    if (simNo.trim() && (simDigits < 10 || simDigits > 15)) next.simNo = "A SIM number has 10 to 15 digits.";
     setErrors(next);
     setFormError(null);
     setWarning(null);
