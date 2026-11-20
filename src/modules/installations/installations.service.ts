@@ -129,6 +129,24 @@ function dataOf(input: InstallationInput | HoldInstallationInput) {
   };
 }
 
+/** The columns for the technician's position (kept as they were when the phone gave none). */
+function fillData(fill: { lat: number; lng: number; accuracy: number } | null | undefined) {
+  if (!fill) return {};
+  return {
+    fillLatitude: new Prisma.Decimal(fill.lat.toFixed(6)),
+    fillLongitude: new Prisma.Decimal(fill.lng.toFixed(6)),
+    fillAccuracy: Math.round(fill.accuracy),
+    fillAt: new Date(),
+  };
+}
+
+/** A completed installation must carry the place it was filled in, so the office can check the technician was on site. */
+function fillRequired(input: InstallationInput) {
+  if (input.fill) return;
+  const message = "Turn on your location and allow it, so we can record where you are.";
+  throw new BadRequestError(message, { form: [message] });
+}
+
 export const installationsService = {
   async customerOptions(db: AppDb): Promise<CustomerChoice[]> {
     const [customers, addresses] = await Promise.all([
@@ -167,7 +185,7 @@ export const installationsService = {
     if (id) await heldMineOrThrow(db, actor, id);
     if (input.customerId) await customerOrThrow(db, input.customerId);
     await uniqueOrThrow(db, input, id);
-    const data ={ ...dataOf(input), holdReason: input.holdReason };
+    const data = { ...dataOf(input), ...fillData(input.fill), holdReason: input.holdReason };
     if (id) return db.installation.update({ where: { id }, data, select: { id: true } });
     return db.installation.create({ data: { companyId, ...data, status: "ON_HOLD" }, select: { id: true } });
   },
@@ -175,20 +193,22 @@ export const installationsService = {
   /** The technician finishes a held record: everything is checked, then it becomes COMPLETED. */
   async completeHeld(db: AppDb, actor: CurrentUser, id: string, input: InstallationInput): Promise<{ id: string }> {
     await heldMineOrThrow(db, actor, id);
+    fillRequired(input);
     await customerOrThrow(db, input.customerId);
     await uniqueOrThrow(db, input, id);
     return db.installation.update({
       where: { id },
-      data: { ...dataOf(input), status: "COMPLETED", holdReason: null },
+      data: { ...dataOf(input), ...fillData(input.fill), status: "COMPLETED", holdReason: null },
       select: { id: true },
     });
   },
 
   async create(db: AppDb, actor: CurrentUser, input: InstallationInput): Promise<{ id: string }> {
     const companyId = companyOf(actor);
+    fillRequired(input);
     await customerOrThrow(db, input.customerId);
     await uniqueOrThrow(db, input);
-    return db.installation.create({ data: { companyId, ...dataOf(input) }, select: { id: true } });
+    return db.installation.create({ data: { companyId, ...dataOf(input), ...fillData(input.fill) }, select: { id: true } });
   },
 
   /** Office staff correct a saved record. */
@@ -298,6 +318,10 @@ export const installationsService = {
       status: r.status as InstallationStatus,
       holdReason: r.holdReason ?? "",
       simNo: r.simNo,
+      fill:
+        r.fillLatitude != null && r.fillLongitude != null
+          ? { lat: Number(r.fillLatitude), lng: Number(r.fillLongitude), accuracy: r.fillAccuracy, at: (r.fillAt ?? r.createdAt).toISOString() }
+          : null,
       latitude: num(r.latitude),
       longitude: num(r.longitude),
       hasTempSensor: r.hasTempSensor,

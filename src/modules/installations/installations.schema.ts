@@ -67,6 +67,14 @@ const simNumber = optionalText(30)
     message: "A SIM number has 10 to 15 digits.",
   });
 
+/** The phone's position when the form is saved (from the browser's location, not typed). */
+export const fillLocationSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  accuracy: z.number().min(0).max(100000),
+});
+export type FillLocation = z.infer<typeof fillLocationSchema>;
+
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-11-04.")
@@ -78,7 +86,7 @@ export const createInstallationSchema = z
     vehicleNo: requiredText(30, "Vehicle number"),
     deviceId: requiredText(60, "Device ID"),
     /** Phone number of the SIM; optional. */
-    simNo: simNumber,
+    simNo: simNumber.refine((s) => s !== "", { message: "Enter the SIM number." }),
     installDate: day,
     location: requiredText(200, "Location"),
     latitude: latitudeText,
@@ -87,6 +95,8 @@ export const createInstallationSchema = z
     hasTempSensor: z.boolean(),
     checklist: z.array(z.enum(INSTALLATION_CHECKLIST)).max(INSTALLATION_CHECKLIST.length),
     notes: optionalText(2000),
+    /** Where the technician was when saving; required for a technician (checked in the service). */
+    fill: fillLocationSchema.nullish(),
   })
   .refine((v) => (v.latitude === "") === (v.longitude === ""), {
     message: "Give both latitude and longitude, or neither.",
@@ -114,6 +124,7 @@ export const holdInstallationSchema = z
     notes: optionalText(2000),
     /** Why the record is put on hold; required. */
     holdReason: z.string().trim().min(1, "Tell us why you are putting it on hold.").max(300),
+    fill: fillLocationSchema.nullish(),
   })
   .refine((v) => (v.latitude === "") === (v.longitude === ""), {
     message: "Give both latitude and longitude, or neither.",
@@ -151,6 +162,8 @@ export type InstallationListItem = {
 export type InstallationDetail = Omit<InstallationListItem, "fileCount" | "thumbs"> & {
   customerId: string | null;
   simNo: string | null;
+  /** Where the technician's phone was when the form was saved. */
+  fill: { lat: number; lng: number; accuracy: number | null; at: string } | null;
   latitude: number | null;
   longitude: number | null;
   hasTempSensor: boolean;

@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { recordLocationAction } from "@/modules/field/field.actions";
 
-const KEY = "fs.shareLocation";
 const EVERY_MS = 60_000;
 
 /** Registers the service worker (production only) so the field app is installable and opens offline. */
@@ -26,45 +25,37 @@ export function PwaRegister() {
   return null;
 }
 
-const readSetting = () => {
-  try {
-    return localStorage.getItem(KEY) !== "off";
-  } catch {
-    return true;
-  }
-};
-
 /**
- * Header toggle + background reporting: while the app is open and visible and sharing is on,
- * the phone's position is sent every minute so the dispatcher's live map stays current.
+ * Header indicator + background reporting. Sharing is always on for a technician (there is no switch):
+ * while the app is open and visible, the phone's position is sent every minute so the dispatcher's live
+ * map stays current. If the browser blocks location the pin turns red and says how to allow it.
  */
 export function LocationSharing() {
-  const [on, setOn] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState<"waiting" | "ok" | "blocked">("waiting");
   const warned = useRef(false);
 
   useEffect(() => {
-    setOn(readSetting());
-    setReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!on || typeof navigator === "undefined" || !navigator.geolocation) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
     const send = () => {
       if (document.visibilityState !== "visible") return;
       navigator.geolocation.getCurrentPosition(
-        (p) =>
+        (p) => {
+          setStatus("ok");
           void recordLocationAction({
             latitude: p.coords.latitude,
             longitude: p.coords.longitude,
             accuracy: p.coords.accuracy,
             speed: p.coords.speed != null && p.coords.speed >= 0 ? p.coords.speed : null,
             heading: p.coords.heading != null && !Number.isNaN(p.coords.heading) ? p.coords.heading : null,
-          }),
+          });
+        },
         (err) => {
-          if (err.code === err.PERMISSION_DENIED && !warned.current) {
-            warned.current = true;
-            toast.error("Location is blocked in your browser, so the dispatcher cannot see you on the map.");
+          if (err.code === err.PERMISSION_DENIED) {
+            setStatus("blocked");
+            if (!warned.current) {
+              warned.current = true;
+              toast.error("Location is blocked. Allow location for this site in your browser settings; it is required.");
+            }
           }
         },
         { enableHighAccuracy: false, timeout: 15_000, maximumAge: 30_000 },
@@ -77,30 +68,24 @@ export function LocationSharing() {
       clearInterval(t);
       document.removeEventListener("visibilitychange", send);
     };
-  }, [on]);
+  }, []);
 
-  if (!ready) return null;
-  const toggle = () => {
-    const next = !on;
-    setOn(next);
-    try {
-      localStorage.setItem(KEY, next ? "on" : "off");
-    } catch {
-      /* private mode: the setting just won't persist */
-    }
-    toast(next ? "Sharing your location with the dispatcher." : "Location sharing is off.");
-  };
-
+  const blocked = status === "blocked";
   return (
     <Button
       variant="ghost"
       size="icon"
-      onClick={toggle}
-      aria-pressed={on}
-      aria-label={on ? "Location sharing on. Tap to turn off." : "Location sharing off. Tap to turn on."}
-      className={on ? "text-emerald-600" : "text-muted-foreground"}
+      onClick={() =>
+        toast(
+          blocked
+            ? "Location is blocked. Allow location for this site in your browser settings, then reload."
+            : "Location sharing is required and always on.",
+        )
+      }
+      aria-label={blocked ? "Location is blocked. Allow it in browser settings." : "Location sharing is on (required)."}
+      className={blocked ? "text-red-600" : "text-emerald-600"}
     >
-      {on ? <MapPin /> : <MapPinOff />}
+      {blocked ? <MapPinOff /> : <MapPin />}
     </Button>
   );
 }

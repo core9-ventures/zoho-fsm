@@ -10,6 +10,14 @@ import { installationsService, type CustomerChoice, type InstallationDetail } fr
 
 export const metadata: Metadata = { title: "Installation" };
 
+/** Straight-line distance between two points, in kilometres. */
+function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const r = (x: number) => (x * Math.PI) / 180;
+  const h =
+    Math.sin(r(bLat - aLat) / 2) ** 2 + Math.cos(r(aLat)) * Math.cos(r(bLat)) * Math.sin(r(bLng - aLng) / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+}
+
 export default async function InstallationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await requireUser();
@@ -30,6 +38,11 @@ export default async function InstallationPage({ params }: { params: Promise<{ i
   const map =
     i.latitude != null && i.longitude != null
       ? `https://www.openstreetmap.org/?mlat=${i.latitude}&mlon=${i.longitude}#map=17/${i.latitude}/${i.longitude}`
+      : null;
+
+  const fillAway =
+    i.fill && i.latitude != null && i.longitude != null
+      ? distanceKm(i.fill.lat, i.fill.lng, i.latitude, i.longitude)
       : null;
 
   return (
@@ -65,6 +78,24 @@ export default async function InstallationPage({ params }: { params: Promise<{ i
           )}
         </p>
       </div>
+      {i.fill && (
+        <p className="text-muted-foreground text-sm">
+          Filled in at {i.fill.lat.toFixed(5)}, {i.fill.lng.toFixed(5)}
+          {i.fill.accuracy != null ? ` (within ${i.fill.accuracy} m)` : ""} on {new Date(i.fill.at).toLocaleString()}
+          {fillAway != null && (
+            <>
+              {" · "}
+              <span className={fillAway > 1 ? "font-medium text-amber-600" : "text-emerald-600"}>
+                {fillAway < 0.1 ? "at the install location" : `${fillAway.toFixed(1)} km from the install location`}
+              </span>
+            </>
+          )}
+          {" · "}
+          <a href={`https://www.openstreetmap.org/?mlat=${i.fill.lat}&mlon=${i.fill.lng}#map=17/${i.fill.lat}/${i.fill.lng}`} target="_blank" rel="noreferrer" className="text-primary underline">
+            View where
+          </a>
+        </p>
+      )}
       <InstallationEditor installation={i} customers={customers} />
     </div>
   );

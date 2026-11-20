@@ -67,6 +67,7 @@ const input = (over: Partial<Record<keyof InstallationInput, unknown>> = {}) =>
     hasTempSensor: false,
     checklist: [...INSTALLATION_CHECKLIST],
     notes: "",
+    fill: { lat: 31.5204, lng: 74.3587, accuracy: 20 },
     ...over,
   });
 
@@ -245,8 +246,8 @@ describe("company sites", () => {
 });
 
 describe("SIM format", () => {
-  it("is optional, but needs 10 to 15 digits when given", () => {
-    expect(createInstallationSchema.safeParse(input({ simNo: "" })).success).toBe(true);
+  it("is required, and needs 10 to 15 digits", () => {
+    expect(createInstallationSchema.safeParse({ ...input(), simNo: "" }).success).toBe(false);
     for (const bad of ["123", "0300-123", "1234567890123456", "abc"]) {
       expect(createInstallationSchema.safeParse({ ...input(), simNo: bad }).success).toBe(false);
     }
@@ -255,12 +256,10 @@ describe("SIM format", () => {
 });
 
 describe("unique SIM", () => {
-  it("refuses a SIM number that is already used, but allows empty SIM numbers", async () => {
+  it("refuses a SIM number that is already used", async () => {
     const sim = `0311${String(stamp).replace(/\D/g, "").slice(-7).padStart(7, "0")}`;
     await make(techA, dbA, { simNo: sim });
     await expect(make(techB, dbB, { simNo: ` ${sim} ` })).rejects.toBeInstanceOf(ConflictError);
-    await make(techA, dbA, { simNo: "" });
-    await make(techA, dbA, { simNo: "" });
   });
 });
 
@@ -381,5 +380,14 @@ describe("hold", () => {
     const a = await installationsService.hold(dbB, techB, holdInput());
     const b = await installationsService.hold(dbB, techB, holdInput());
     ids.push(a.id, b.id);
+  });
+});
+
+describe("where the technician filled the form", () => {
+  it("is required to complete, and is saved with the record", async () => {
+    await expect(make(techA, dbA, { fill: null })).rejects.toBeInstanceOf(BadRequestError);
+    const id = await make(techA, dbA, { fill: { lat: 31.52, lng: 74.35, accuracy: 12.4 } });
+    const got = await installationsService.get(dbA, techA, id);
+    expect(got.fill).toMatchObject({ lat: 31.52, lng: 74.35, accuracy: 12 });
   });
 });

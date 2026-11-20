@@ -34,6 +34,20 @@ import {
 import { HeldPhotos } from "./held-photos";
 import { InstallationPhotos, type PendingFile } from "./installation-photos";
 
+type Fill = { lat: number; lng: number; accuracy: number };
+
+/** Reads where the phone is right now (the browser asks permission); null when it is blocked or unavailable. */
+function readFill(timeout: number): Promise<Fill | null> {
+  return new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout, maximumAge: 0 },
+    );
+  });
+}
+
 const today = () => new Date().toISOString().slice(0, 10);
 
 type FieldKey = "vehicleNo" | "deviceId" | "company" | "date" | "location" | "deviceType" | "simNo";
@@ -70,6 +84,10 @@ export function NewInstallationForm({ customers, held }: { customers: CustomerCh
   const [notes, setNotes] = useState(held?.notes ?? "");
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
+  // Errors also pop up in the top-right corner, like the success messages.
+  useEffect(() => {
+    if (formError) toast.error(formError);
+  }, [formError]);
   const [added, setAdded] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [photosKey, setPhotosKey] = useState(0);
@@ -215,8 +233,10 @@ export function NewInstallationForm({ customers, held }: { customers: CustomerCh
     try {
       let res: Awaited<ReturnType<typeof holdInstallationAction>>;
       try {
+        const fill = await readFill(8_000);
         res = await holdInstallationAction(held?.id ?? null, {
           ...values(),
+          fill,
           holdReason,
           customerId: company,
           deviceType: deviceType as (typeof DEVICE_TYPES)[number] | "",
@@ -271,7 +291,8 @@ export function NewInstallationForm({ customers, held }: { customers: CustomerCh
     if (!location.trim()) next.location = "Enter the location.";
     if (!deviceType) next.deviceType = "Choose the device type.";
     const simDigits = simNo.replace(/\D/g, "").length;
-    if (simNo.trim() && (simDigits < 10 || simDigits > 15)) next.simNo = "A SIM number has 10 to 15 digits.";
+    if (!simNo.trim()) next.simNo = "Enter the SIM number.";
+    else if ((simDigits < 10 || simDigits > 15)) next.simNo = "A SIM number has 10 to 15 digits.";
     setErrors(next);
     setFormError(null);
     setWarning(null);
@@ -283,7 +304,20 @@ export function NewInstallationForm({ customers, held }: { customers: CustomerCh
     try {
       let res: Awaited<ReturnType<typeof createInstallationAction>>;
       try {
-        const input = { ...values(), customerId: company, deviceType: deviceType as (typeof DEVICE_TYPES)[number] };
+        const fill = await readFill(15_000);
+        if (!fill) {
+          setFormError(
+            "We could not get your location. Turn on location, allow it for this site in your browser settings, and tap Add Record again. It is needed to record that you are on site.",
+          );
+          setAdded(null);
+          return;
+        }
+        const input = {
+          ...values(),
+          fill,
+          customerId: company,
+          deviceType: deviceType as (typeof DEVICE_TYPES)[number],
+        };
         res = held ? await completeInstallationAction(held.id, input) : await createInstallationAction(input);
       } catch {
         // The server restarted or the sign-in ended while saving; nothing was lost on the form.

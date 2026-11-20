@@ -1002,6 +1002,11 @@ model Installation {
   status        String    @default("COMPLETED")
   /// Why the technician put it on hold (cleared when it is completed).
   holdReason    String?
+  /// Where the technician's phone was when the form was saved (to verify they were on site), and how accurate it was in metres.
+  fillLatitude  Decimal?  @db.Decimal(9, 6)
+  fillLongitude Decimal?  @db.Decimal(9, 6)
+  fillAccuracy  Int?
+  fillAt        DateTime? @db.Timestamptz(3)
   createdAt     DateTime  @default(now()) @db.Timestamptz(3)
   createdById   String?
   updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
