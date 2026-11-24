@@ -21,5 +21,8 @@ export default defineConfig({
     // Integration tests share one database: run files one at a time.
     fileParallelism: false,
     testTimeout: 20_000,
+    // next-auth imports "next/server" without the .js extension, which plain Node cannot resolve: let Vite do it
+    // (needed by tests that call the API route handlers).
+    server: { deps: { inline: ["next-auth"] } },
   },
 });
