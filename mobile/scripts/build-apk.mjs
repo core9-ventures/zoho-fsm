@@ -1,5 +1,6 @@
-// Builds the debug APK on this PC (Windows): finds Android Studio's Java and the Android SDK, runs Gradle,
-// and copies the result to mobile/apk/fieldserve-debug.apk.  Run through:  pnpm apk
+// Builds the debug APK on this PC (Windows): builds the web app, syncs it into the Android project, finds Android
+// Studio's Java and the Android SDK, runs Gradle, and copies the result to mobile/apk/fieldserve-debug.apk.
+// Run through:  pnpm apk
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -24,13 +25,25 @@ const sdk =
 if (!javaHome) throw new Error("Java not found. Install Android Studio, or set JAVA_HOME.");
 if (!sdk) throw new Error("Android SDK not found. Install Android Studio, or set ANDROID_HOME.");
 
-// Gradle reads the SDK folder from local.properties (this file is not committed).
-writeFileSync(path.join(androidDir, "local.properties"), `sdk.dir=${sdk.replace(/\\/g, "\\\\")}\n`);
+const env = { ...process.env, JAVA_HOME: javaHome, ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, CAP_DEBUG: "1", JAVA_TOOL_OPTIONS: "-Djava.net.preferIPv4Stack=true", GRADLE_OPTS: "-Djava.net.preferIPv4Stack=true" };
 
-const env = { ...process.env, JAVA_HOME: javaHome, ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk };
-const gradle = win ? "gradlew.bat" : "./gradlew";
-const run = spawnSync(gradle, ["assembleDebug"], { cwd: androidDir, env, stdio: "inherit", shell: win });
-if (run.status !== 0) process.exit(run.status ?? 1);
+function run(cmd, args, cwd) {
+  console.log(`\n> ${cmd} ${args.join(" ")}`);
+  const r = spawnSync(cmd, args, { cwd, env, stdio: "inherit", shell: win });
+  if (r.status !== 0) process.exit(r.status ?? 1);
+}
+
+// pnpm may not be on the PATH (it often is not in PowerShell); corepack ships with Node and can run it.
+const hasPnpm = spawnSync("pnpm", ["--version"], { env, shell: win, stdio: "ignore" }).status === 0;
+const pnpm = (args) => (hasPnpm ? ["pnpm", args] : ["corepack", ["pnpm", ...args]]);
+
+// 1. The web app, then copy it into the Android project.
+run(...pnpm(["build"]), root);
+run(...pnpm(["exec", "cap", "sync", "android"]), root);
+
+// 2. Gradle reads the SDK folder from local.properties (this file is not committed).
+writeFileSync(path.join(androidDir, "local.properties"), `sdk.dir=${sdk.replace(/\\/g, "\\\\")}\n`);
+run(win ? ".\\gradlew.bat" : "./gradlew", ["assembleDebug", "--no-daemon"], androidDir);
 
 const built = path.join(androidDir, "app", "build", "outputs", "apk", "debug", "app-debug.apk");
 if (!existsSync(built)) throw new Error(`Build finished but ${built} is missing.`);

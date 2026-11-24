@@ -5,6 +5,7 @@
 export { ApiError, onSessionLost } from "./http";
 export { authApi, type SessionUser } from "./auth";
 export { fieldInstallations, officeInstallations } from "./installations";
+export { attachments, fieldJobs, fieldLocation } from "./jobs";
 export type {
   CustomerChoice,
   HoldInstallationInput,
@@ -13,3 +14,5 @@ export type {
   InstallationListItem,
   PagedResult,
 } from "./installations";
+export type { FieldJob, FieldJobDetail, FieldJobList, TransitionInput } from "./jobs";
+export { FIELD_ACTION_LABEL } from "./jobs";

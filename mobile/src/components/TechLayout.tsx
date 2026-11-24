@@ -1,12 +1,13 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { Header } from "./Header";
+import { LocationSharing } from "./LocationSharing";
 import { TECH_TABS } from "../nav";
 
-/** Technician shell: header on top, three tabs at the bottom. */
+/** Technician shell: header (with the always-on location pin) on top, three tabs at the bottom. */
 export function TechLayout() {
   return (
     <div className="flex h-full flex-col">
-      <Header />
+      <Header trailing={<LocationSharing />} />
       <main className="flex-1 overflow-y-auto p-4">
         <Outlet />
       </main>

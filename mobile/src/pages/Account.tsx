@@ -1,6 +1,6 @@
 import { Loader2, RefreshCw } from "lucide-react";
 import { authApi } from "../api";
-import { API_BASE_URL } from "../config";
+import { apiBaseUrl } from "../config";
 import { useAsync } from "../data/useAsync";
 import { useSession } from "../session";
 
@@ -44,7 +44,7 @@ export function Account() {
             <dt className="text-muted-foreground">Company</dt>
             <dd>{me.companyName ?? "—"}</dd>
             <dt className="text-muted-foreground">Server</dt>
-            <dd className="text-xs break-all">{API_BASE_URL}</dd>
+            <dd className="text-xs break-all">{apiBaseUrl()}</dd>
           </dl>
         )}
       </div>

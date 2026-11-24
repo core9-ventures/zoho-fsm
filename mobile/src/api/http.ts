@@ -1,4 +1,4 @@
-import { API_BASE_URL, REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from "../config";
+import { apiBaseUrl, REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from "../config";
 import { clearTokens, readTokens, saveTokens, type Tokens } from "./tokens";
 
 /** The server's response envelope. */
@@ -51,7 +51,7 @@ type Options = {
 };
 
 function urlFor(path: string, query?: Options["query"]) {
-  const url = new URL(`${API_BASE_URL}/api/v1${path}`);
+  const url = new URL(`${apiBaseUrl()}/api/v1${path}`);
   for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
   return url.toString();
 }
@@ -115,8 +115,8 @@ async function parse<T>(res: Response): Promise<T> {
   return json.data as T;
 }
 
-/** One call to the FieldServe API. Returns the `data` of the envelope, or throws an ApiError. */
-export async function request<T>(method: string, path: string, opts: Options = {}): Promise<T> {
+/** Sends the call; when the access token has expired it is refreshed once and the call repeated. */
+async function execute(method: string, path: string, opts: Options): Promise<Response> {
   const useAuth = opts.auth !== false;
   const tokens = useAuth ? readTokens() : null;
   if (useAuth && !tokens) {
@@ -132,7 +132,19 @@ export async function request<T>(method: string, path: string, opts: Options = {
     }
     res = await send(method, path, opts, fresh.accessToken);
   }
-  return parse<T>(res);
+  return res;
+}
+
+/** One call to the FieldServe API. Returns the `data` of the envelope, or throws an ApiError. */
+export async function request<T>(method: string, path: string, opts: Options = {}): Promise<T> {
+  return parse<T>(await execute(method, path, opts));
+}
+
+/** A file (photo thumbnail, photo, video) as a Blob: an <img> tag cannot send the sign-in header, so the app fetches it. */
+export async function requestBlob(path: string, query?: Options["query"]): Promise<Blob> {
+  const res = await execute("GET", path, { query });
+  if (!res.ok) throw new ApiError(`Could not load the file (${res.status}).`, res.status);
+  return res.blob();
 }
 
 export const http = {

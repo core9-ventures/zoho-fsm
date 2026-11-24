@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { ApiError } from "../api";
-import { API_BASE_URL } from "../config";
+import { apiBaseUrl, setApiBaseUrl } from "../config";
+import { Button, Field, Modal, inputClass } from "../ui/kit";
 import { useSession } from "../session";
 
 /** Email + password sign-in against the FieldServe server. */
@@ -13,6 +14,10 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [server, setServer] = useState(apiBaseUrl());
+  const [serverOpen, setServerOpen] = useState(false);
+  const [serverText, setServerText] = useState("");
+  const [serverError, setServerError] = useState("");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -110,7 +115,57 @@ export function Login() {
         </button>
       </form>
 
-      <p className="text-muted-foreground text-center text-xs break-all">Server: {API_BASE_URL}</p>
+      <div className="text-muted-foreground text-center text-xs">
+        <p className="break-all">Server: {server}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setServerText(server);
+            setServerError("");
+            setServerOpen(true);
+          }}
+          className="mt-1 underline"
+        >
+          Change server
+        </button>
+      </div>
+
+      <Modal
+        open={serverOpen}
+        title="Server address"
+        description="The address of your FieldServe server, for example https://fieldserve.example.com. On a phone, localhost does not work: use your PC's address on the same Wi-Fi (like http://192.168.1.20:3100) or the live address."
+        onClose={() => setServerOpen(false)}
+        footer={
+          <>
+            <Button
+              onClick={() => {
+                const err = setApiBaseUrl(serverText);
+                if (err) return setServerError(err);
+                setServer(apiBaseUrl());
+                setServerOpen(false);
+              }}
+            >
+              Save
+            </Button>
+            <Button variant="outline" onClick={() => setServerOpen(false)}>
+              Cancel
+            </Button>
+          </>
+        }
+      >
+        <Field label="Server address" htmlFor="server" error={serverError}>
+          <input
+            id="server"
+            type="url"
+            inputMode="url"
+            autoCapitalize="none"
+            autoCorrect="off"
+            value={serverText}
+            onChange={(e) => setServerText(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+      </Modal>
     </div>
   );
 }

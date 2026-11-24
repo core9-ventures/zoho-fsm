@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "cap:sync": "pnpm build && cap sync android",
     "cap:open": "cap open android",
-    "apk": "pnpm cap:sync && node scripts/build-apk.mjs"
+    "apk": "node scripts/build-apk.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.2",
