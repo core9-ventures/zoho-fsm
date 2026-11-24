@@ -15,6 +15,7 @@ import { PUT as holdUpdateRoute } from "@/app/api/v1/field/installations/[id]/ho
 import { POST as completeRoute } from "@/app/api/v1/field/installations/[id]/complete/route";
 import { POST as officeHoldRoute } from "@/app/api/v1/installations/[id]/hold/route";
 import { GET as officeGetRoute } from "@/app/api/v1/installations/[id]/route";
+import { GET as listPlansRoute } from "@/app/api/v1/maintenance/route";
 
 const owner = new PrismaClient({ datasourceUrl: process.env.DIRECT_DATABASE_URL });
 const password = process.env.SEED_PASSWORD ?? "";
@@ -153,5 +154,16 @@ describe("CORS for the app", () => {
     expect(corsHeaders("https://app.example", ["https://app.example"])["Access-Control-Allow-Origin"]).toBe(
       "https://app.example",
     );
+  });
+});
+
+describe("office endpoints the app uses", () => {
+  it("lists maintenance plans for an Admin and refuses a Dispatcher", async () => {
+    const admin = await authService.loginForTokens("admin@demo.local", password, "127.0.0.1");
+    const dispatcher = await authService.loginForTokens("dispatcher@demo.local", password, "127.0.0.1");
+    const asAdmin = await call(listPlansRoute, admin.accessToken, "GET");
+    expect(asAdmin.status).toBe(200);
+    expect(Array.isArray(asAdmin.json.data)).toBe(true);
+    expect((await call(listPlansRoute, dispatcher.accessToken, "GET")).status).toBe(403);
   });
 });

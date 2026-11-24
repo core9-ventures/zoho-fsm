@@ -8,6 +8,16 @@ import { ComingSoon } from "./pages/ComingSoon";
 import { InstallationView } from "./pages/InstallationView";
 import { JobDetail } from "./pages/JobDetail";
 import { Login } from "./pages/Login";
+import { Assets, AssetDetail } from "./pages/office/Assets";
+import { Catalog } from "./pages/office/Catalog";
+import { CustomerDetail, Customers } from "./pages/office/Customers";
+import { Dispatch } from "./pages/office/Dispatch";
+import { EstimateDetail, Estimates } from "./pages/office/Estimates";
+import { InvoiceDetail, Invoices } from "./pages/office/Invoices";
+import { Maintenance } from "./pages/office/Maintenance";
+import { OfficeInstallationDetail, OfficeInstallations } from "./pages/office/OfficeInstallations";
+import { WorkOrderDetail } from "./pages/office/WorkOrderDetail";
+import { WorkOrders } from "./pages/office/WorkOrders";
 import { MyInstallations } from "./pages/MyInstallations";
 import { MyJobs } from "./pages/MyJobs";
 import { NewInstallation } from "./pages/NewInstallation";
@@ -46,7 +56,23 @@ export function App() {
   return (
     <Routes>
       <Route element={<OfficeLayout />}>
-        {OFFICE_MENU.map((m) => (
+        <Route path="/dispatch" element={<Dispatch />} />
+        <Route path="/work-orders" element={<WorkOrders />} />
+        <Route path="/work-orders/:id" element={<WorkOrderDetail />} />
+        <Route path="/customers" element={<Customers />} />
+        <Route path="/customers/:id" element={<CustomerDetail />} />
+        <Route path="/installations" element={<OfficeInstallations />} />
+        <Route path="/installations/:id" element={<OfficeInstallationDetail />} />
+        <Route path="/estimates" element={<Estimates />} />
+        <Route path="/estimates/:id" element={<EstimateDetail />} />
+        <Route path="/invoices" element={<Invoices />} />
+        <Route path="/invoices/:id" element={<InvoiceDetail />} />
+        <Route path="/catalog" element={<Catalog />} />
+        <Route path="/assets" element={<Assets />} />
+        <Route path="/assets/:id" element={<AssetDetail />} />
+        <Route path="/maintenance" element={<Maintenance />} />
+        {/* Built in Phase 5 */}
+        {OFFICE_MENU.filter((m) => m.phase >= 5).map((m) => (
           <Route key={m.to} path={`${m.to}/*`} element={<ComingSoon />} />
         ))}
         <Route path="*" element={<Navigate to="/dispatch" replace />} />

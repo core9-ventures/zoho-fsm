@@ -16,3 +16,30 @@ export type {
 } from "./installations";
 export type { FieldJob, FieldJobDetail, FieldJobList, TransitionInput } from "./jobs";
 export { FIELD_ACTION_LABEL } from "./jobs";
+
+export {
+  assetsApi,
+  catalogApi,
+  customersApi,
+  dispatchApi,
+  estimatesApi,
+  invoicesApi,
+  maintenanceApi,
+  workOrdersApi,
+} from "./office";
+export type {
+  AssetDto,
+  Board,
+  CustomerDto,
+  CustomerListItem,
+  EstimateDetail,
+  EstimateListItem,
+  InvoiceDetail,
+  InvoiceListItem,
+  InvoiceSummary,
+  ListQuery,
+  MaintenancePlanDto,
+  ServiceItemDto,
+  WorkOrderDetail,
+  WorkOrderListItem,
+} from "./office";

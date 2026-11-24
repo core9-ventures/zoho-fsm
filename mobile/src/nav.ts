@@ -19,7 +19,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type NavItem = { to: string; label: string; icon: LucideIcon; phase: number };
+export type NavItem = { to: string; label: string; icon: LucideIcon; phase: number; adminOnly?: boolean };
 
 /** Technician: bottom tabs (the same three as the web app). */
 export const TECH_TABS: NavItem[] = [
@@ -37,11 +37,11 @@ export const OFFICE_MENU: NavItem[] = [
   { to: "/installations", label: "Installations", icon: PackageSearch, phase: 4 },
   { to: "/estimates", label: "Estimates", icon: FileText, phase: 4 },
   { to: "/invoices", label: "Invoices", icon: Receipt, phase: 4 },
-  { to: "/catalog", label: "Catalog", icon: Boxes, phase: 4 },
+  { to: "/catalog", label: "Catalog", icon: Boxes, phase: 4, adminOnly: true },
   { to: "/assets", label: "Assets", icon: Wrench, phase: 4 },
-  { to: "/maintenance", label: "Maintenance", icon: ShieldCheck, phase: 4 },
+  { to: "/maintenance", label: "Maintenance", icon: ShieldCheck, phase: 4, adminOnly: true },
   { to: "/reports", label: "Reports", icon: BarChart3, phase: 5 },
   { to: "/live-map", label: "Live map", icon: MapPin, phase: 5 },
-  { to: "/users", label: "Users", icon: Users, phase: 5 },
-  { to: "/settings", label: "Settings", icon: Settings, phase: 5 },
+  { to: "/users", label: "Users", icon: Users, phase: 5, adminOnly: true },
+  { to: "/settings", label: "Settings", icon: Settings, phase: 5, adminOnly: true },
 ];

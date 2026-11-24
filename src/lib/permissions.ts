@@ -68,6 +68,7 @@ const API_RESOURCES: Record<string, PermissionResource> = {
   attachments: "workOrders",
   installations: "workOrders",
   "company/settings": "settings",
+  maintenance: "maintenance",
   field: "field",
 };
 

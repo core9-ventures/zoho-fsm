@@ -23,3 +23,10 @@ export const GEO_MESSAGE: Record<"blocked" | "unavailable" | "unsupported", stri
   unavailable: "Could not get your location. Move to an open area and try again.",
   unsupported: "This phone cannot share its location.",
 };
+
+/** Straight-line distance between two points, in kilometres. */
+export function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const r = (x: number) => (x * Math.PI) / 180;
+  const h = Math.sin(r(bLat - aLat) / 2) ** 2 + Math.cos(r(aLat)) * Math.cos(r(bLat)) * Math.sin(r(bLng - aLng) / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+}

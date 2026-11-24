@@ -3,10 +3,13 @@ import { NavLink, Outlet } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Header } from "./Header";
 import { OFFICE_MENU } from "../nav";
+import { useSession } from "../session";
 
 /** Office shell: header with a menu button that opens the list of screens. */
 export function OfficeLayout() {
   const [open, setOpen] = useState(false);
+  const { user } = useSession();
+  const menu = OFFICE_MENU.filter((m) => !m.adminOnly || user?.role === "ADMIN");
   return (
     <div className="flex h-full flex-col">
       <Header
@@ -43,7 +46,7 @@ export function OfficeLayout() {
               </button>
             </div>
             <nav className="flex-1 overflow-y-auto p-2" aria-label="Office menu">
-              {OFFICE_MENU.map(({ to, label, icon: Icon }) => (
+              {menu.map(({ to, label, icon: Icon }) => (
                 <NavLink
                   key={to}
                   to={to}
