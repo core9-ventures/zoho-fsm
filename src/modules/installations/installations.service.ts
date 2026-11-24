@@ -140,6 +140,34 @@ function fillData(fill: { lat: number; lng: number; accuracy: number } | null | 
   };
 }
 
+type FillPoint = { lat: number; lng: number; accuracy: number | null; at: string };
+
+/**
+ * The columns for a new technician position, keeping the one it replaces: the previous position is
+ * appended to fillHistory (oldest first), so an installation put on hold and completed again keeps both.
+ */
+async function fillPatch(
+  db: AppDb,
+  id: string | undefined,
+  fill: { lat: number; lng: number; accuracy: number } | null | undefined,
+) {
+  const next = fillData(fill);
+  if (!fill || !id) return next;
+  const old = await db.installation.findFirst({
+    where: { id },
+    select: { fillLatitude: true, fillLongitude: true, fillAccuracy: true, fillAt: true, fillHistory: true },
+  });
+  if (!old || old.fillLatitude == null || old.fillLongitude == null) return next;
+  const history = Array.isArray(old.fillHistory) ? (old.fillHistory as unknown as FillPoint[]) : [];
+  const prev: FillPoint = {
+    lat: Number(old.fillLatitude),
+    lng: Number(old.fillLongitude),
+    accuracy: old.fillAccuracy,
+    at: (old.fillAt ?? new Date()).toISOString(),
+  };
+  return { ...next, fillHistory: [...history, prev] as unknown as Prisma.InputJsonValue };
+}
+
 /** A completed installation must carry the place it was filled in, so the office can check the technician was on site. */
 function fillRequired(input: InstallationInput) {
   if (input.fill) return;
@@ -185,7 +213,13 @@ export const installationsService = {
     if (id) await heldMineOrThrow(db, actor, id);
     if (input.customerId) await customerOrThrow(db, input.customerId);
     await uniqueOrThrow(db, input, id);
-    const data = { ...dataOf(input), ...fillData(input.fill), holdReason: input.holdReason };
+    const data = {
+      ...dataOf(input),
+      ...(await fillPatch(db, id, input.fill)),
+      holdReason: input.holdReason,
+      holdBy: null,
+      holdAt: null,
+    };
     if (id) return db.installation.update({ where: { id }, data, select: { id: true } });
     return db.installation.create({ data: { companyId, ...data, status: "ON_HOLD" }, select: { id: true } });
   },
@@ -198,7 +232,14 @@ export const installationsService = {
     await uniqueOrThrow(db, input, id);
     return db.installation.update({
       where: { id },
-      data: { ...dataOf(input), ...fillData(input.fill), status: "COMPLETED", holdReason: null },
+      data: {
+        ...dataOf(input),
+        ...(await fillPatch(db, id, input.fill)),
+        status: "COMPLETED",
+        holdReason: null,
+        holdBy: null,
+        holdAt: null,
+      },
       select: { id: true },
     });
   },
@@ -209,6 +250,25 @@ export const installationsService = {
     await customerOrThrow(db, input.customerId);
     await uniqueOrThrow(db, input);
     return db.installation.create({ data: { companyId, ...dataOf(input), ...fillData(input.fill) }, select: { id: true } });
+  },
+
+  /**
+   * The office puts a completed installation back on hold (the technician asked for a fix, for example a wrong
+   * photo). It then shows in the technician's On hold section with the reason, and the technician finishes it again.
+   */
+  async putOnHold(db: AppDb, actor: CurrentUser, id: string, reason: string): Promise<{ id: string }> {
+    if (actor.role === "TECHNICIAN") throw new ForbiddenError("Only the office can put an installation on hold.");
+    const row = await db.installation.findFirst({ where: { id }, select: { id: true, status: true } });
+    if (!row) throw new NotFoundError("Installation", id);
+    if (row.status !== "COMPLETED") {
+      const message = "This installation is already on hold.";
+      throw new ConflictError(message, { form: [message] });
+    }
+    return db.installation.update({
+      where: { id },
+      data: { status: "ON_HOLD", holdReason: reason, holdBy: actor.fullName, holdAt: new Date() },
+      select: { id: true },
+    });
   },
 
   /** Office staff correct a saved record. */
@@ -280,6 +340,7 @@ export const installationsService = {
         createdAt: r.createdAt.toISOString(),
         status: r.status as InstallationStatus,
         holdReason: r.holdReason ?? "",
+        holdBy: r.holdBy ?? "",
         fileCount: (byId.get(r.id) ?? []).length,
         thumbs: (byId.get(r.id) ?? [])
           .filter((p) => p.kind === "PHOTO")
@@ -317,6 +378,9 @@ export const installationsService = {
       createdAt: r.createdAt.toISOString(),
       status: r.status as InstallationStatus,
       holdReason: r.holdReason ?? "",
+      holdBy: r.holdBy ?? "",
+      holdAt: r.holdAt ? r.holdAt.toISOString() : null,
+      fillHistory: Array.isArray(r.fillHistory) ? (r.fillHistory as unknown as FillPoint[]) : [],
       simNo: r.simNo,
       fill:
         r.fillLatitude != null && r.fillLongitude != null

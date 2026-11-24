@@ -24,7 +24,12 @@ export function InstallationCard({ i }: { i: InstallationListItem }) {
         <p className="text-muted-foreground text-xs">
           {[formatDay(i.installDate), i.deviceId].filter(Boolean).join(" · ")}
         </p>
-        {held && i.holdReason && <p className="truncate text-xs text-amber-600">Reason: {i.holdReason}</p>}
+        {held && i.holdReason && (
+          <p className="truncate text-xs text-amber-600">
+            {i.holdBy ? `Put on hold by ${i.holdBy}: ` : "Reason: "}
+            {i.holdReason}
+          </p>
+        )}
       </div>
       <div className="flex shrink-0 -space-x-2">
         {i.thumbs.slice(0, 3).map((t) => (

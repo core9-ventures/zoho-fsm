@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ClickableRow } from "./clickable-row";
+import { PutOnHoldButton } from "./put-on-hold-button";
 import { Pagination } from "@/components/data-table/pagination";
 import { SearchInput } from "@/components/data-table/search-input";
 import { UrlSelect } from "@/components/data-table/url-select";
@@ -65,12 +66,13 @@ export default async function InstallationsPage({ searchParams }: { searchParams
               <TableHead className="hidden md:table-cell">Technician</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Photos</TableHead>
+              <TableHead className="w-px" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {result.items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="text-muted-foreground py-10 text-center">
+                <TableCell colSpan={9} className="text-muted-foreground py-10 text-center">
                   No installations yet.
                 </TableCell>
               </TableRow>
@@ -96,9 +98,12 @@ export default async function InstallationsPage({ searchParams }: { searchParams
                 </TableCell>
                 <TableCell>
                   {i.status === "ON_HOLD" ? (
-                    <Badge variant="outline" className="border-amber-500/60 text-amber-600">
-                      On hold
-                    </Badge>
+                    <div>
+                      <Badge variant="outline" className="border-amber-500/60 text-amber-600">
+                        On hold
+                      </Badge>
+                      {i.holdBy && <p className="text-muted-foreground mt-1 text-xs">by {i.holdBy}</p>}
+                    </div>
                   ) : (
                     <Badge variant="secondary">Completed</Badge>
                   )}
@@ -122,6 +127,9 @@ export default async function InstallationsPage({ searchParams }: { searchParams
                       )}
                     </Link>
                   )}
+                </TableCell>
+                <TableCell>
+                  {i.status === "COMPLETED" && <PutOnHoldButton id={i.id} vehicleNo={i.vehicleNo} />}
                 </TableCell>
               </ClickableRow>
             ))}

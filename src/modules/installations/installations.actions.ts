@@ -6,6 +6,7 @@ import { installationsService } from "./installations.service";
 import {
   createInstallationSchema,
   holdInstallationSchema,
+  putOnHoldSchema,
   type HoldInstallationInput,
   type InstallationInput,
 } from "./installations.schema";
@@ -75,6 +76,17 @@ export async function deleteInstallationAction(id: string) {
     ({ db, input }) => installationsService.remove(db, input.id),
   );
   if (res.ok) revalidatePath("/installations");
+  return res;
+}
+
+/** Office (Admin or Dispatcher) puts a completed installation back on hold so the technician can fix it. */
+export async function putInstallationOnHoldAction(id: string, reason: string) {
+  const res = await runAction(
+    { roles: OFFICE, permission: "workOrders:edit", input: putOnHoldSchema },
+    { id, reason },
+    ({ db, user, input }) => installationsService.putOnHold(db, user, input.id, input.reason),
+  );
+  if (res.ok) revalidatePath("/installations", "layout");
   return res;
 }
 

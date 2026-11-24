@@ -94,7 +94,7 @@ export function NewInstallationForm({ customers, held }: { customers: CustomerCh
   const [busy, setBusy] = useState(false);
   const [photoCount, setPhotoCount] = useState(0);
   const [holdOpen, setHoldOpen] = useState(false);
-  const [reason, setReason] = useState(held?.holdReason ?? "");
+  const [reason, setReason] = useState(held?.holdBy ? "" : (held?.holdReason ?? ""));
   const [reasonError, setReasonError] = useState("");
   const files = useRef<{ list: PendingFile[]; temp: boolean }>({ list: [], temp: false });
 

@@ -11,7 +11,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { CurrentUser } from "@/lib/auth";
 import { createDb, prismaBase, tenantContext, type AppDb } from "@/lib/db";
-import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "@/lib/errors";
 import {
   createInstallationSchema,
   holdInstallationSchema,
@@ -389,5 +389,37 @@ describe("where the technician filled the form", () => {
     const id = await make(techA, dbA, { fill: { lat: 31.52, lng: 74.35, accuracy: 12.4 } });
     const got = await installationsService.get(dbA, techA, id);
     expect(got.fill).toMatchObject({ lat: 31.52, lng: 74.35, accuracy: 12 });
+  });
+});
+
+describe("office puts a completed installation on hold", () => {
+  it("only the office can, and it needs a completed record", async () => {
+    const id = await make();
+    await expect(installationsService.putOnHold(dbA, techA, id, "wrong photo")).rejects.toBeInstanceOf(ForbiddenError);
+    await installationsService.putOnHold(db, dispatcher, id, "Wrong cabin photo");
+    await expect(installationsService.putOnHold(db, dispatcher, id, "again")).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("shows on the technician's On hold list with who and why, and clears it on completing again", async () => {
+    const id = await make();
+    await installationsService.putOnHold(db, dispatcher, id, "Wrong cabin photo");
+    const held = await installationsService.get(dbA, techA, id);
+    expect(held).toMatchObject({ status: "ON_HOLD", holdReason: "Wrong cabin photo", holdBy: dispatcher.fullName });
+    const list = await installationsService.list(dbA, techA, installationListQuerySchema.parse({ status: "ON_HOLD" }));
+    expect(list.items.some((x) => x.id === id && x.holdBy === dispatcher.fullName)).toBe(true);
+
+    await installationsService.completeHeld(dbA, techA, id, input({ fill: { lat: 31.6, lng: 74.4, accuracy: 8 } }));
+    const done = await installationsService.get(dbA, techA, id);
+    expect(done).toMatchObject({ status: "COMPLETED", holdReason: "", holdBy: "", holdAt: null });
+  });
+
+  it("keeps the old position and the new one", async () => {
+    const id = await make(techA, dbA, { fill: { lat: 31.52, lng: 74.35, accuracy: 12 } });
+    await installationsService.putOnHold(db, dispatcher, id, "Wrong photo");
+    await installationsService.completeHeld(dbA, techA, id, input({ fill: { lat: 31.6, lng: 74.4, accuracy: 8 } }));
+    const got = await installationsService.get(dbA, techA, id);
+    expect(got.fill).toMatchObject({ lat: 31.6, lng: 74.4 });
+    expect(got.fillHistory).toHaveLength(1);
+    expect(got.fillHistory[0]).toMatchObject({ lat: 31.52, lng: 74.35, accuracy: 12 });
   });
 });

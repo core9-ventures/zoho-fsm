@@ -1002,11 +1002,16 @@ model Installation {
   status        String    @default("COMPLETED")
   /// Why the technician put it on hold (cleared when it is completed).
   holdReason    String?
+  /// Set when the office put a completed installation back on hold: who did it and when (null when the technician held it).
+  holdBy        String?
+  holdAt        DateTime? @db.Timestamptz(3)
   /// Where the technician's phone was when the form was saved (to verify they were on site), and how accurate it was in metres.
   fillLatitude  Decimal?  @db.Decimal(9, 6)
   fillLongitude Decimal?  @db.Decimal(9, 6)
   fillAccuracy  Int?
   fillAt        DateTime? @db.Timestamptz(3)
+  /// Earlier positions (oldest first) kept when the technician saves the form again after an office hold: [{lat,lng,accuracy,at}].
+  fillHistory   Json      @default("[]")
   createdAt     DateTime  @default(now()) @db.Timestamptz(3)
   createdById   String?
   updatedAt     DateTime  @updatedAt @db.Timestamptz(3)

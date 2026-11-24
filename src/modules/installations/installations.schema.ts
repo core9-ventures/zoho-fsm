@@ -132,6 +132,13 @@ export const holdInstallationSchema = z
   });
 export type HoldInstallationInput = z.infer<typeof holdInstallationSchema>;
 
+/** The office puts a completed installation back on hold, with the reason the technician sees. */
+export const putOnHoldSchema = z.object({
+  id: idParam,
+  reason: z.string().trim().min(1, "Tell the technician what to fix.").max(300),
+});
+export type PutOnHoldInput = z.infer<typeof putOnHoldSchema>;
+
 export const installationListQuerySchema = pagedQuerySchema.pick({ page: true, pageSize: true, search: true }).extend({
   customerId: idParam.optional(),
   status: z.enum(INSTALLATION_STATUSES).optional(),
@@ -153,6 +160,8 @@ export type InstallationListItem = {
   status: InstallationStatus;
   /** Why it is on hold (empty when it is not). */
   holdReason: string;
+  /** Name of the office user who put it on hold (empty when the technician held it, or it is not on hold). */
+  holdBy: string;
   /** Photos and videos attached so far. */
   fileCount: number;
   /** Ids of the first few photos, shown as small previews in the list. */
@@ -164,6 +173,10 @@ export type InstallationDetail = Omit<InstallationListItem, "fileCount" | "thumb
   simNo: string | null;
   /** Where the technician's phone was when the form was saved. */
   fill: { lat: number; lng: number; accuracy: number | null; at: string } | null;
+  /** Earlier positions (oldest first), kept when the form was saved again after an office hold. */
+  fillHistory: { lat: number; lng: number; accuracy: number | null; at: string }[];
+  /** When the office put it on hold. */
+  holdAt: string | null;
   latitude: number | null;
   longitude: number | null;
   hasTempSensor: boolean;

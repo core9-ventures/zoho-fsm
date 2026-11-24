@@ -31,6 +31,11 @@ export default async function ContinueInstallationPage({ params }: { params: Pro
         <p className="text-muted-foreground text-sm">
           This record is on hold. Finish it and press Add Record, or put it on hold again.
         </p>
+        {held.holdBy && held.holdReason && (
+          <p className="mt-2 rounded-md border border-amber-500/60 px-3 py-2 text-sm text-amber-600">
+            Put on hold by {held.holdBy}: {held.holdReason}
+          </p>
+        )}
       </div>
       <NewInstallationForm customers={customers} held={held} />
     </div>
