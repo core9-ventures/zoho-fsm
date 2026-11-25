@@ -43,3 +43,15 @@ export type {
   WorkOrderDetail,
   WorkOrderListItem,
 } from "./office";
+
+export { dashboardApi, liveApi, reportsApi, rolesApi, settingsApi, usersApi } from "./admin";
+export type {
+  CompanyDto,
+  CompanySettingsInput,
+  CustomRoleDto,
+  DashboardKpis,
+  LiveTechnician,
+  Report,
+  ReportType,
+  UserDto,
+} from "./admin";

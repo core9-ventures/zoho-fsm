@@ -16,6 +16,8 @@ import { POST as completeRoute } from "@/app/api/v1/field/installations/[id]/com
 import { POST as officeHoldRoute } from "@/app/api/v1/installations/[id]/hold/route";
 import { GET as officeGetRoute } from "@/app/api/v1/installations/[id]/route";
 import { GET as listPlansRoute } from "@/app/api/v1/maintenance/route";
+import { GET as dashboardRoute } from "@/app/api/v1/dashboard/route";
+import { GET as listRolesRoute } from "@/app/api/v1/roles/route";
 
 const owner = new PrismaClient({ datasourceUrl: process.env.DIRECT_DATABASE_URL });
 const password = process.env.SEED_PASSWORD ?? "";
@@ -165,5 +167,23 @@ describe("office endpoints the app uses", () => {
     expect(asAdmin.status).toBe(200);
     expect(Array.isArray(asAdmin.json.data)).toBe(true);
     expect((await call(listPlansRoute, dispatcher.accessToken, "GET")).status).toBe(403);
+  });
+});
+
+describe("admin endpoints the app uses", () => {
+  it("serves the dashboard to office users and the role list only to an Admin", async () => {
+    const admin = await authService.loginForTokens("admin@demo.local", password, "127.0.0.1");
+    const dispatcher = await authService.loginForTokens("dispatcher@demo.local", password, "127.0.0.1");
+    const tech = await authService.loginForTokens("tech1@demo.local", password, "127.0.0.1");
+
+    const board = await call(dashboardRoute, dispatcher.accessToken, "GET");
+    expect(board.status).toBe(200);
+    expect(board.json.data).toMatchObject({ openWorkOrders: expect.any(Number), completedPerDay: expect.any(Array) });
+    expect((await call(dashboardRoute, tech.accessToken, "GET")).status).toBe(403);
+
+    const roles = await call(listRolesRoute, admin.accessToken, "GET");
+    expect(roles.status).toBe(200);
+    expect(Array.isArray(roles.json.data)).toBe(true);
+    expect((await call(listRolesRoute, dispatcher.accessToken, "GET")).status).toBe(403);
   });
 });

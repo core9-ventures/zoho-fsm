@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Boxes,
+  Lock,
   Briefcase,
   Building2,
   CalendarClock,
@@ -43,5 +44,6 @@ export const OFFICE_MENU: NavItem[] = [
   { to: "/reports", label: "Reports", icon: BarChart3, phase: 5 },
   { to: "/live-map", label: "Live map", icon: MapPin, phase: 5 },
   { to: "/users", label: "Users", icon: Users, phase: 5, adminOnly: true },
+  { to: "/roles", label: "Roles", icon: Lock, phase: 5, adminOnly: true },
   { to: "/settings", label: "Settings", icon: Settings, phase: 5, adminOnly: true },
 ];

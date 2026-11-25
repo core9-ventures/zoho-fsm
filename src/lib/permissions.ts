@@ -69,6 +69,8 @@ const API_RESOURCES: Record<string, PermissionResource> = {
   installations: "workOrders",
   "company/settings": "settings",
   maintenance: "maintenance",
+  dashboard: "dashboard",
+  roles: "users",
   field: "field",
 };
 

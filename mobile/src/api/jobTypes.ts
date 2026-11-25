@@ -69,3 +69,12 @@ export type FieldJobDetail = {
   meId: string;
   closed: boolean;
 };
+
+/** A technician on the live map (mirrors `LiveTechnician` in the server's field.schema). */
+export type LiveTechnician = {
+  id: string;
+  name: string;
+  color: string;
+  location: { latitude: number; longitude: number; recordedAt: string; accuracy: number | null } | null;
+  job: { number: string; title: string; customerName: string; status: string } | null;
+};

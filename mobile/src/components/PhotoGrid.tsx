@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
-import { Camera, Loader2, Play, RotateCcw, Trash2, Video } from "lucide-react";
+import { Camera, Images, Loader2, Play, RotateCcw, Trash2, Video } from "lucide-react";
 import { attachments } from "../api";
 import { shrinkPhoto, videoSeconds } from "../lib/photo";
 import { useToast } from "../ui/toast";
 import { AuthImage } from "./AuthImage";
+import { CameraCapture, canOpenCamera } from "./CameraCapture";
+import { VideoRecorder, canRecordVideo } from "./VideoRecorder";
 
 /** One photo or video of the grid: already on the server (`remoteId`) or chosen on the phone and waiting (`local`). */
 export type PhotoItem = {
@@ -54,18 +56,45 @@ export function PhotoGrid({ title, slots, items, video, other, disabled, onPhoto
     }
   }
 
-  const photoChosen = (key: string, slot: string | null) => async (file: File) => {
-    if (!file.type.startsWith("image/")) return toast.error("Choose a photo.");
-    await run(key, async () => onPhoto(slot, await shrinkPhoto(file)));
+  /** Saves one photo (from the camera or the gallery); returns whether it worked. */
+  const photoSaver = (key: string, slot: string | null) => async (file: File): Promise<boolean> => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Choose a photo.");
+      return false;
+    }
+    setBusyKey(key);
+    try {
+      await onPhoto(slot, await shrinkPhoto(file));
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save the file.");
+      return false;
+    } finally {
+      setBusyKey(null);
+    }
   };
 
-  const videoChosen = async (file: File) => {
-    if (!video || !onVideo) return;
-    if (!file.type.startsWith("video/")) return toast.error("Choose a video.");
+  const videoSaver = async (file: File): Promise<boolean> => {
+    if (!video || !onVideo) return false;
+    if (!file.type.startsWith("video/")) {
+      toast.error("Choose a video.");
+      return false;
+    }
     const seconds = await videoSeconds(file);
-    if (seconds != null && seconds > video.maxSeconds + 0.5)
-      return toast.error(`The video can be at most ${video.maxSeconds} seconds. Record a shorter one.`);
-    await run("video", () => onVideo(file));
+    if (seconds != null && seconds > video.maxSeconds + 0.5) {
+      toast.error(`The video can be at most ${video.maxSeconds} seconds. Record a shorter one.`);
+      return false;
+    }
+    setBusyKey("video");
+    try {
+      await onVideo(file);
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save the file.");
+      return false;
+    } finally {
+      setBusyKey(null);
+    }
   };
 
   return (
@@ -76,6 +105,7 @@ export function PhotoGrid({ title, slots, items, video, other, disabled, onPhoto
           {items.filter((i) => i.slot || i.kind === "VIDEO").length}/{slots.length + (video ? 1 : 0)}
         </span>
       </div>
+      {/* <p className="text-muted-foreground text-xs">Tap a box to add a photo. Retake replaces it.</p> */}
       {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
 
       <div className="grid grid-cols-2 gap-3">
@@ -86,8 +116,8 @@ export function PhotoGrid({ title, slots, items, video, other, disabled, onPhoto
             item={bySlot(s.key)}
             busy={busyKey === s.key}
             disabled={disabled}
-            accept="image/*"
-            onFile={photoChosen(s.key, s.key)}
+            kind="PHOTO"
+            save={photoSaver(s.key, s.key)}
             onRemove={(i) => run(s.key, () => onRemove(i))}
           />
         ))}
@@ -97,9 +127,9 @@ export function PhotoGrid({ title, slots, items, video, other, disabled, onPhoto
             item={videoItem}
             busy={busyKey === "video"}
             disabled={disabled}
-            accept="video/*"
-            isVideo
-            onFile={videoChosen}
+            kind="VIDEO"
+            maxSeconds={video.maxSeconds}
+            save={videoSaver}
             onRemove={(i) => run("video", () => onRemove(i))}
           />
         )}
@@ -130,14 +160,16 @@ export function PhotoGrid({ title, slots, items, video, other, disabled, onPhoto
             </div>
           )}
           {!disabled && others.length < other.max && (
-            <PickButton
-              accept="image/*"
+            <PickMenu
+              kind="PHOTO"
+              title="Other photos"
               busy={busyKey === "other"}
-              onFile={photoChosen("other", null)}
+              save={photoSaver("other", null)}
+              multi={{ room: other.max - others.length }}
               className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed py-3 text-sm font-medium"
             >
               <Camera className="size-4" /> Add another photo
-            </PickButton>
+            </PickMenu>
           )}
         </div>
       )}
@@ -147,52 +179,131 @@ export function PhotoGrid({ title, slots, items, video, other, disabled, onPhoto
 
 function Thumb({ item, className }: { item: PhotoItem; className: string }) {
   if (item.local) {
-    // eslint-disable-next-line @next/next/no-img-element
     return <img src={item.local.url} alt={item.name} className={className} />;
   }
   return <AuthImage id={item.remoteId!} alt={item.name} className={className} />;
 }
 
-/** A button that opens the phone's camera (or the file chooser on a computer). */
-function PickButton({
-  accept,
-  onFile,
+const MENU_WIDTH = 208;
+
+/**
+ * A button that opens a small menu, the same as on the web portal: "Take photo" (or "Record video") opens the app's
+ * own camera, "Choose from gallery" opens the phone's files. If the camera cannot open inside the page, the phone's
+ * camera app is used instead.
+ */
+function PickMenu({
+  kind,
+  title,
+  save,
+  multi,
+  maxSeconds,
   busy,
   className,
   children,
   label,
 }: {
-  accept: string;
-  onFile: (file: File) => void;
+  kind: "PHOTO" | "VIDEO";
+  /** Name shown at the top of the camera screen. */
+  title: string;
+  /** Saves one file; returns whether it worked. */
+  save: (file: File) => Promise<boolean>;
+  /** Other photos: the camera stays open for several shots and the gallery accepts several files. */
+  multi?: { room: number };
+  maxSeconds?: number;
   busy?: boolean;
   className: string;
   children: React.ReactNode;
   label?: string;
 }) {
-  const input = useRef<HTMLInputElement>(null);
+  const toast = useToast();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const gallery = useRef<HTMLInputElement>(null);
+  const phoneCamera = useRef<HTMLInputElement>(null);
+  const [menu, setMenu] = useState<{ top: number; left: number } | null>(null);
+  const [cam, setCam] = useState(false);
+  const [rec, setRec] = useState(false);
+  const isVideo = kind === "VIDEO";
+  const accept = isVideo ? "video/*" : "image/*";
+
+  // Place the menu under the button (above it when there is no room), kept inside the screen.
+  const openMenu = () => {
+    if (!trigger.current) return;
+    const r = trigger.current.getBoundingClientRect();
+    const height = 104;
+    const below = r.bottom + 6 + height <= window.innerHeight;
+    const left = Math.min(Math.max(8, r.left + r.width / 2 - MENU_WIDTH / 2), window.innerWidth - MENU_WIDTH - 8);
+    setMenu({ top: below ? r.bottom + 6 : r.top - 6 - height, left });
+  };
+
+  const openCamera = () => {
+    setMenu(null);
+    if (isVideo ? canRecordVideo() : canOpenCamera()) return isVideo ? setRec(true) : setCam(true);
+    phoneCamera.current?.click();
+  };
+
+  const openGallery = () => {
+    setMenu(null);
+    gallery.current?.click();
+  };
+
+  const chosen = async (files: FileList | null) => {
+    const list = Array.from(files ?? []);
+    for (const input of [gallery.current, phoneCamera.current]) if (input) input.value = "";
+    if (list.length === 0) return;
+    const room = multi ? Math.max(0, multi.room) : 1;
+    if (list.length > room && multi) toast.error(room > 0 ? `Only ${room} more photo${room === 1 ? "" : "s"} fit${room === 1 ? "s" : ""}; the rest were skipped.` : "This section is full.");
+    for (const file of list.slice(0, Math.max(1, room))) await save(file);
+  };
+
   return (
     <>
-      <input
-        ref={input}
-        type="file"
-        accept={accept}
-        capture="environment"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          e.target.value = "";
-          if (f) onFile(f);
-        }}
-      />
       <button
+        ref={trigger}
         type="button"
         disabled={busy}
         aria-label={label}
-        onClick={() => input.current?.click()}
+        aria-haspopup="menu"
+        aria-expanded={!!menu}
+        onClick={openMenu}
         className={`${className} disabled:opacity-60`}
       >
         {busy ? <Loader2 className="size-5 animate-spin" /> : children}
       </button>
+
+      {menu && (
+        <>
+          <button type="button" aria-label="Close menu" className="fixed inset-0 z-40 cursor-default" onClick={() => setMenu(null)} />
+          <div
+            role="menu"
+            className="bg-card fixed z-50 rounded-lg border p-1 text-sm shadow-lg"
+            style={{ top: menu.top, left: menu.left, width: MENU_WIDTH }}
+          >
+            <button type="button" role="menuitem" onClick={openCamera} className="active:bg-accent flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-left">
+              {isVideo ? <Video className="size-4" /> : <Camera className="size-4" />} {isVideo ? "Record video" : "Take photo"}
+            </button>
+            <button type="button" role="menuitem" onClick={openGallery} className="active:bg-accent flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-left">
+              <Images className="size-4" /> Choose from gallery
+            </button>
+          </div>
+        </>
+      )}
+
+      {cam && (
+        <CameraCapture
+          open
+          mode={multi ? "multi" : "single"}
+          title={title}
+          room={multi?.room}
+          onClose={() => setCam(false)}
+          onShot={save}
+        />
+      )}
+      {rec && <VideoRecorder open title={title} maxSeconds={maxSeconds} onClose={() => setRec(false)} onShot={save} />}
+
+      {/* The phone's camera app, used only when the camera cannot open inside the page. */}
+      <input ref={phoneCamera} type="file" accept={accept} capture="environment" className="hidden" onChange={(e) => void chosen(e.target.files)} />
+      {/* The gallery: any photo or video saved on the phone. */}
+      <input ref={gallery} type="file" accept={accept} multiple={!!multi} className="hidden" onChange={(e) => void chosen(e.target.files)} />
     </>
   );
 }
@@ -202,20 +313,21 @@ function Tile({
   item,
   busy,
   disabled,
-  accept,
-  isVideo,
-  onFile,
+  kind,
+  maxSeconds,
+  save,
   onRemove,
 }: {
   label: string;
   item?: PhotoItem;
   busy: boolean;
   disabled?: boolean;
-  accept: string;
-  isVideo?: boolean;
-  onFile: (file: File) => void;
+  kind: "PHOTO" | "VIDEO";
+  maxSeconds?: number;
+  save: (file: File) => Promise<boolean>;
   onRemove: (item: PhotoItem) => void;
 }) {
+  const isVideo = kind === "VIDEO";
   const Icon = isVideo ? Video : Camera;
   return (
     <div className="space-y-1.5">
@@ -225,15 +337,17 @@ function Tile({
           {isVideo ? <VideoPreview item={item} /> : <Thumb item={item} className="aspect-[4/3] w-full rounded-md object-cover" />}
           {!disabled && (
             <div className="grid grid-cols-2 gap-1.5">
-              <PickButton
-                accept={accept}
+              <PickMenu
+                kind={kind}
+                title={label}
                 busy={busy}
-                onFile={onFile}
+                save={save}
+                maxSeconds={maxSeconds}
                 label={`Retake ${label}`}
                 className="bg-muted flex items-center justify-center gap-1 rounded-md py-2 text-xs font-medium"
               >
                 <RotateCcw className="size-3.5" /> Retake
-              </PickButton>
+              </PickMenu>
               <button
                 type="button"
                 disabled={busy}
@@ -247,15 +361,17 @@ function Tile({
           )}
         </div>
       ) : (
-        <PickButton
-          accept={accept}
+        <PickMenu
+          kind={kind}
+          title={label}
           busy={busy}
-          onFile={onFile}
+          save={save}
+          maxSeconds={maxSeconds}
           label={`Add ${label}`}
           className="text-muted-foreground flex aspect-[4/3] w-full items-center justify-center rounded-md border-2 border-dashed"
         >
           <Icon className="size-7" />
-        </PickButton>
+        </PickMenu>
       )}
     </div>
   );
