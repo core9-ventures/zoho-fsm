@@ -5,7 +5,9 @@ import type {
   InstallationListItem,
 } from "@/modules/installations/installations.schema";
 import type { FieldJob, FieldJobDetail, FieldJobList } from "../api/jobTypes";
+import type { SyncResponse } from "../api/syncTypes";
 import { getDb } from "./db";
+import type { Statement } from "./types";
 
 /**
  * What the technician's screens read, kept in the phone database. The API layer saves every answer it gets from the
@@ -32,8 +34,31 @@ async function safe<T>(work: () => Promise<T>, fallback: T): Promise<T> {
 
 const jobKey = (j: FieldJob) => `${j.workOrderId}|${j.day}|${j.startTime}`;
 
+/** Days ahead the phone keeps jobs, until the server tells it otherwise (it sends `windowDays` with every sync). */
+const DEFAULT_WINDOW_DAYS = 7;
+/** A job in one of these states stays on the phone even when its visit is outside the window. */
+const ALWAYS_KEEP = new Set(["DISPATCHED", "IN_PROGRESS", "ON_HOLD"]);
+
+/** "2026-11-26" + 7 days → "2026-12-03" (calendar dates have no time zone). */
+export function addDays(day: string, n: number): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The jobs the phone keeps: visits up to `windowDays` ahead, plus anything in progress or on hold. */
+export function jobsInWindow(list: FieldJobList, windowDays = DEFAULT_WINDOW_DAYS): FieldJob[] {
+  const last = addDays(list.today, windowDays);
+  return list.jobs.filter((j) => j.day <= last || ALWAYS_KEEP.has(j.status));
+}
+
+const insertJob = (j: FieldJob, position: number, at: number): Statement => ({
+  sql: "INSERT OR REPLACE INTO jobs (id, work_order_id, day, status, position, data, saved_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+  params: [jobKey(j), j.workOrderId, j.day, j.status, position, JSON.stringify(j), at],
+});
+
 export const jobsCache = {
-  /** The server's list replaces what was saved: it always sends the complete current list. */
+  /** The server's list replaces what was saved (it always sends the complete current list); only the window is kept. */
   save: (list: FieldJobList) =>
     safe(async () => {
       const db = await getDb();
@@ -41,10 +66,7 @@ export const jobsCache = {
       const at = now();
       await db.batch([
         { sql: "DELETE FROM jobs" },
-        ...list.jobs.map((j, i) => ({
-          sql: "INSERT OR REPLACE INTO jobs (id, work_order_id, day, status, position, data, saved_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-          params: [jobKey(j), j.workOrderId, j.day, j.status, i, JSON.stringify(j), at],
-        })),
+        ...jobsInWindow(list).map((j, i) => insertJob(j, i, at)),
         {
           sql: "INSERT OR REPLACE INTO meta (key, value) VALUES ('jobs_list', ?)",
           params: [JSON.stringify({ today: list.today, timeZone: list.timeZone, savedAt: at })],
@@ -195,4 +217,85 @@ export const customersCache = {
       const rows = await db.all<{ data: string }>("SELECT data FROM customers WHERE deleted = 0 ORDER BY name");
       return rows.map((r) => parse<CustomerChoice>(r.data));
     }, null),
+};
+
+// ---- Sync (the whole window in one go) ----
+
+/** What the phone remembers about its last sync. */
+export type SyncState = {
+  /** The server's clock at the last answer: sent back as `since`. */
+  serverTime: string;
+  /** When (phone clock) the last sync finished. */
+  lastSyncedAt: number;
+  /** When the last full copy was made; a full copy is repeated now and then in case an incremental one missed something. */
+  lastFullAt: number;
+  windowDays: number;
+};
+
+export const syncCache = {
+  state: (): Promise<SyncState | null> =>
+    safe(async () => {
+      const db = await getDb();
+      if (!db) return null;
+      const row = (await db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'sync_state'"))[0];
+      return row ? parse<SyncState>(row.value) : null;
+    }, null),
+
+  /**
+   * Writes one answer of the server in a single transaction: the phone either has all of it or none of it.
+   * Lists replace what was saved (so jobs given to someone else, or deleted records, disappear); details are added
+   * or updated; details of rows that left the lists are removed.
+   * Throws when the write fails, so the caller does not mark the sync as done.
+   */
+  apply: async (res: SyncResponse, at = now()): Promise<SyncState | null> => {
+    const db = await getDb();
+    if (!db) return null;
+    const previous = await syncCache.state();
+    const state: SyncState = {
+      serverTime: res.serverTime,
+      lastSyncedAt: at,
+      lastFullAt: res.full ? at : (previous?.lastFullAt ?? at),
+      windowDays: res.windowDays,
+    };
+    const jobs = jobsInWindow(res.jobs, res.windowDays);
+    await db.batch([
+      // Jobs
+      { sql: "DELETE FROM jobs" },
+      ...jobs.map((j, i) => insertJob(j, i, at)),
+      {
+        sql: "INSERT OR REPLACE INTO meta (key, value) VALUES ('jobs_list', ?)",
+        params: [JSON.stringify({ today: res.jobs.today, timeZone: res.jobs.timeZone, savedAt: at })],
+      },
+      ...res.jobDetails.map((d) => ({
+        sql: "INSERT OR REPLACE INTO job_details (id, data, saved_at, deleted) VALUES (?, ?, ?, 0)",
+        params: [d.id, JSON.stringify(d), at],
+      })),
+      { sql: "DELETE FROM job_details WHERE id NOT IN (SELECT work_order_id FROM jobs)" },
+      // Installations
+      { sql: "DELETE FROM installations" },
+      ...res.installations.map((i) => ({
+        sql: "INSERT OR REPLACE INTO installations (id, status, created_at, search_text, data, saved_at, deleted) VALUES (?, ?, ?, ?, ?, ?, 0)",
+        params: [i.id, i.status, i.createdAt, searchText(i), JSON.stringify(i), at],
+      })),
+      { sql: "INSERT OR REPLACE INTO meta (key, value) VALUES ('installations_saved', ?)", params: [String(at)] },
+      ...res.installationDetails.map((d) => ({
+        sql: "INSERT OR REPLACE INTO installation_details (id, data, saved_at, deleted) VALUES (?, ?, ?, 0)",
+        params: [d.id, JSON.stringify(d), at],
+      })),
+      { sql: "DELETE FROM installation_details WHERE id NOT IN (SELECT id FROM installations)" },
+      // Companies and sites (only when the server sent them)
+      ...(res.customers
+        ? [
+            { sql: "DELETE FROM customers" },
+            ...res.customers.map((c) => ({
+              sql: "INSERT OR REPLACE INTO customers (id, name, data, saved_at, deleted) VALUES (?, ?, ?, ?, 0)",
+              params: [c.id, c.name, JSON.stringify(c), at],
+            })),
+            { sql: "INSERT OR REPLACE INTO meta (key, value) VALUES ('customers_saved', ?)", params: [String(at)] },
+          ]
+        : []),
+      { sql: "INSERT OR REPLACE INTO meta (key, value) VALUES ('sync_state', ?)", params: [JSON.stringify(state)] },
+    ]);
+    return state;
+  },
 };

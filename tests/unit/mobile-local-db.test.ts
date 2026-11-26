@@ -23,7 +23,7 @@ const sqliteModule = (() => {
 const holder: { db: Db | null } = { db: null };
 vi.mock("../../mobile/src/local/db", () => ({ getDb: async () => holder.db }));
 
-import { customersCache, installationsCache, jobsCache } from "../../mobile/src/local/cache";
+import { addDays, customersCache, installationsCache, jobsCache, jobsInWindow, syncCache } from "../../mobile/src/local/cache";
 
 function memoryDb(): Db {
   const sql = new sqliteModule!.DatabaseSync(":memory:");
@@ -177,5 +177,113 @@ describe.skipIf(!sqliteModule)("without a phone database (browser preview)", () 
     expect(await jobsCache.load()).toBeNull();
     expect(await installationsCache.loadList({})).toBeNull();
     expect(await customersCache.load()).toBeNull();
+  });
+});
+
+describe.skipIf(!sqliteModule)("sync: the 7-day window", () => {
+  const list = (jobs: ReturnType<typeof job>[]) => ({ today: '2026-11-26', timeZone: 'Asia/Karachi', jobs });
+
+  it('adds days to a calendar date', () => {
+    expect(addDays('2026-11-26', 7)).toBe('2026-12-03');
+    expect(addDays('2026-12-30', 3)).toBe('2027-01-02');
+  });
+
+  it('keeps visits up to 7 days ahead and anything in progress or on hold, whatever the date', () => {
+    const jobs = [
+      job(1, '2026-11-20'), // history
+      job(2, '2026-12-03'), // last day of the window
+      job(3, '2026-12-04'), // one day too far
+      { ...job(4, '2027-02-01'), status: 'IN_PROGRESS' },
+      { ...job(5, '2027-02-01'), status: 'ON_HOLD' },
+    ];
+    expect(jobsInWindow(list(jobs)).map((j) => j.number)).toEqual(['WO-1', 'WO-2', 'WO-4', 'WO-5']);
+    expect(jobsInWindow(list(jobs), 2).map((j) => j.number)).toEqual(['WO-1', 'WO-4', 'WO-5']);
+  });
+
+  it('the list saved after an online read only keeps the window', async () => {
+    await jobsCache.save(list([job(1), job(2, '2027-03-01')]));
+    expect((await jobsCache.load())!.jobs.map((j) => j.number)).toEqual(['WO-1']);
+  });
+});
+
+describe.skipIf(!sqliteModule)('sync: applying the server answer', () => {
+  const detail = (n: number) => ({ id: `wo${n}`, number: `WO-${n}`, title: `Job ${n}`, checklist: [] }) as never;
+  const answer = (over: Record<string, unknown> = {}) =>
+    ({
+      serverTime: '2026-11-26T10:00:00.000Z',
+      full: true,
+      windowDays: 7,
+      jobs: { today: '2026-11-26', timeZone: 'Asia/Karachi', jobs: [job(1), job(2)] },
+      jobDetails: [detail(1), detail(2)],
+      installations: [inst(1, 'COMPLETED'), inst(3, 'ON_HOLD')],
+      installationDetails: [{ id: 'i1', simNo: '1' }, { id: 'i3', simNo: '3' }],
+      customers: [{ id: 'c1', name: 'Acme', sites: [] }],
+      ...over,
+    }) as never;
+
+  it('a full copy fills every table and records the state', async () => {
+    const state = await syncCache.apply(answer(), 1000);
+    expect(state).toMatchObject({ serverTime: '2026-11-26T10:00:00.000Z', lastSyncedAt: 1000, lastFullAt: 1000, windowDays: 7 });
+    expect((await syncCache.state())!.serverTime).toBe('2026-11-26T10:00:00.000Z');
+    expect((await jobsCache.load())!.jobs).toHaveLength(2);
+    expect(await jobsCache.loadDetail('wo2')).not.toBeNull();
+    expect((await installationsCache.loadList({ status: 'ON_HOLD' }))!.items.map((i) => i.id)).toEqual(['i3']);
+    expect(await installationsCache.loadDetail('i1')).not.toBeNull();
+    expect((await customersCache.load())!.map((c) => c.name)).toEqual(['Acme']);
+  });
+
+  it('an incremental answer keeps the details that were not sent again, and updates the ones that were', async () => {
+    await syncCache.apply(answer(), 1000);
+    const changed = { ...(detail(1) as object), title: 'Renamed' } as never;
+    const state = await syncCache.apply(
+      answer({ full: false, serverTime: '2026-11-26T10:05:00.000Z', jobDetails: [changed], installationDetails: [], customers: null }),
+      2000,
+    );
+    expect(state).toMatchObject({ lastSyncedAt: 2000, lastFullAt: 1000 }); // not a full copy: the old date stays
+    expect(((await jobsCache.loadDetail('wo1')) as { title: string }).title).toBe('Renamed');
+    expect(await jobsCache.loadDetail('wo2')).not.toBeNull(); // unchanged, kept
+    expect(await installationsCache.loadDetail('i3')).not.toBeNull();
+    expect((await customersCache.load())!).toHaveLength(1); // customers: null means unchanged
+  });
+
+  it('a job that left the list loses its detail, and an installation that was deleted disappears', async () => {
+    await syncCache.apply(answer(), 1000);
+    await syncCache.apply(
+      answer({
+        full: false,
+        jobs: { today: '2026-11-26', timeZone: 'Asia/Karachi', jobs: [job(2)] },
+        jobDetails: [],
+        installations: [inst(3, 'ON_HOLD')],
+        installationDetails: [],
+        customers: null,
+      }),
+      2000,
+    );
+    expect((await jobsCache.load())!.jobs.map((j) => j.number)).toEqual(['WO-2']);
+    expect(await jobsCache.loadDetail('wo1')).toBeNull();
+    expect(await jobsCache.loadDetail('wo2')).not.toBeNull();
+    expect((await installationsCache.loadList({}))!.items.map((i) => i.id)).toEqual(['i3']);
+    expect(await installationsCache.loadDetail('i1')).toBeNull();
+  });
+
+  it('replaces the companies when new ones are sent', async () => {
+    await syncCache.apply(answer(), 1000);
+    await syncCache.apply(answer({ full: false, customers: [{ id: 'c2', name: 'Zeta', sites: [] }] }), 2000);
+    expect((await customersCache.load())!.map((c) => c.name)).toEqual(['Zeta']);
+  });
+
+  it('is all or nothing: a failing statement leaves the old data as it was', async () => {
+    await syncCache.apply(answer(), 1000);
+    // A job with no status breaks the NOT NULL rule of the table half-way through the transaction.
+    const bad = answer({ jobs: { today: '2026-11-26', timeZone: 'x', jobs: [job(9), { ...job(8), status: null }] } });
+    await expect(syncCache.apply(bad, 2000)).rejects.toThrow();
+    expect((await jobsCache.load())!.jobs.map((j) => j.number)).toEqual(['WO-1', 'WO-2']);
+    expect((await syncCache.state())!.lastSyncedAt).toBe(1000);
+  });
+
+  it('does nothing without a phone database', async () => {
+    holder.db = null;
+    expect(await syncCache.apply(answer())).toBeNull();
+    expect(await syncCache.state()).toBeNull();
   });
 });
