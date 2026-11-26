@@ -86,6 +86,22 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 3,
+    statements: [
+      // Photos and videos waiting to be uploaded (Phase 4): the file itself is kept in the phone's file storage,
+      // under the change's `local_id`; here only what is needed to send it.
+      `ALTER TABLE outbox ADD COLUMN file_name TEXT`,
+      `ALTER TABLE outbox ADD COLUMN file_type TEXT`,
+      `ALTER TABLE outbox ADD COLUMN file_fields TEXT`,
+      // GPS readings taken without a signal, sent in batches when it returns.
+      `CREATE TABLE IF NOT EXISTS gps_points (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        data TEXT NOT NULL,
+        recorded_at TEXT NOT NULL
+      )`,
+    ],
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

@@ -21,15 +21,25 @@ const sqliteModule = (() => {
 const holder: { db: Db | null } = { db: null };
 vi.mock("../../mobile/src/local/db", () => ({ getDb: async () => holder.db, isLocalDbAvailable: () => true }));
 
-type Call = { method: string; path: string; body?: unknown; idempotencyKey?: string };
+// The phone's file storage, in memory.
+const files = new Map<string, Blob>();
+vi.mock("../../mobile/src/local/fileStore", () => ({
+  fileStore: {
+    save: async (id: string, blob: Blob) => void files.set(id, blob),
+    read: async (id: string) => files.get(id) ?? null,
+    remove: async (id: string) => void files.delete(id),
+  },
+}));
+
+type Call = { method: string; path: string; body?: unknown; idempotencyKey?: string; form?: FormData };
 const calls: Call[] = [];
 let respond: (c: Call) => unknown = () => null;
 vi.mock("../../mobile/src/api/http", async (orig) => {
   const real = await orig<typeof import("../../mobile/src/api/http")>();
   return {
     ...real,
-    request: async (method: string, path: string, opts: { body?: unknown; idempotencyKey?: string } = {}) => {
-      const c = { method, path, body: opts.body, idempotencyKey: opts.idempotencyKey };
+    request: async (method: string, path: string, opts: { body?: unknown; idempotencyKey?: string; form?: FormData } = {}) => {
+      const c = { method, path, body: opts.body, idempotencyKey: opts.idempotencyKey, form: opts.form };
       calls.push(c);
       return respond(c);
     },
@@ -39,7 +49,9 @@ vi.mock("../../mobile/src/api/http", async (orig) => {
 import { ApiError } from "../../mobile/src/api/http";
 import { installationsCache, jobsCache } from "../../mobile/src/local/cache";
 import { optimistic } from "../../mobile/src/local/optimistic";
+import { flushGps, gpsBacklog, recordReading } from "../../mobile/src/local/gps";
 import {
+  cancelQueuedFile,
   discardChange,
   flushOutbox,
   isLocalId,
@@ -99,6 +111,7 @@ describe.skipIf(!sqliteModule)("Offline Phase 3 — outbox on the phone", () => 
     holder.db = memoryDb();
     await migrate(holder.db);
     calls.length = 0;
+    files.clear();
     respond = () => null;
     setOnline(true);
     await refreshOutboxStatus();
@@ -324,5 +337,210 @@ describe.skipIf(!sqliteModule)("Offline Phase 3 — outbox on the phone", () => 
     expect(job?.checklist[0].isDone).toBe(true);
     expect(job?.notes.map((n) => n.text)).toEqual(["done here"]);
     expect(job?.notes[0].mine).toBe(true);
+  });
+
+  // ---- Photos and videos ----
+
+
+  it("a photo taken without a signal is kept on the phone, shown at once and uploaded later with its fields", async () => {
+    setOnline(false);
+    await jobsCache.saveDetail(jobDetail() as never);
+    const blob = new Blob(["pixels"], { type: "image/jpeg" });
+    const localId = newLocalId();
+    const res = await write({
+      method: "POST",
+      path: "/field/jobs/wo1/attachments",
+      label: "Photo for WO-1",
+      localId,
+      file: { blob, name: "front.jpg", fields: { phase: "BEFORE", slot: "FRONT" } },
+      optimistic: () => optimistic.jobFile("wo1", "BEFORE", { id: localId, name: "front.jpg", kind: "PHOTO", slot: "FRONT", type: "image/jpeg" }),
+    });
+    expect(res.queued).toBe(true);
+    expect(files.has(localId)).toBe(true);
+    expect(calls).toHaveLength(0);
+    const shown = await jobsCache.loadDetail("wo1");
+    expect(shown?.evidence.before.map((m) => [m.id, m.slot, m.kind])).toEqual([[localId, "FRONT", "PHOTO"]]);
+
+    setOnline(true);
+    respond = () => ({ id: "att-1" });
+    await flushOutbox();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].form?.get("phase")).toBe("BEFORE");
+    expect(calls[0].form?.get("slot")).toBe("FRONT");
+    expect((calls[0].form?.get("file") as File).name).toBe("front.jpg");
+    expect(files.has(localId)).toBe(false); // the file is removed once the server has it
+    expect(await resolveId(localId)).toBe("att-1");
+  });
+
+  it("a new photo in a labeled box replaces the one waiting there", async () => {
+    setOnline(false);
+    await jobsCache.saveDetail(jobDetail() as never);
+    for (const id of ["local-aaaaaaaa", "local-bbbbbbbb"]) {
+      await optimistic.jobFile("wo1", "AFTER", { id, name: "x.jpg", kind: "PHOTO", slot: "FRONT", type: "image/jpeg" });
+    }
+    expect((await jobsCache.loadDetail("wo1"))?.evidence.after.map((m) => m.id)).toEqual(["local-bbbbbbbb"]);
+  });
+
+  it("removing a photo that is still waiting takes it out of the queue and deletes the file", async () => {
+    setOnline(false);
+    const localId = newLocalId();
+    await write({
+      method: "POST",
+      path: "/field/jobs/wo1/attachments",
+      label: "Photo",
+      localId,
+      file: { blob: new Blob(["x"], { type: "image/jpeg" }), name: "a.jpg", fields: { phase: "BEFORE" } },
+    });
+    expect(await cancelQueuedFile(localId)).toBe(true);
+    expect(await listOutbox()).toHaveLength(0);
+    expect(files.has(localId)).toBe(false);
+    expect(await cancelQueuedFile(localId)).toBe(false);
+  });
+
+  it("a photo of a record created offline follows it: it uploads to the real id", async () => {
+    setOnline(false);
+    const recordId = newLocalId();
+    const photoId = newLocalId();
+    await write({ method: "POST", path: "/field/installations", body: {}, label: "New", localId: recordId });
+    await write({
+      method: "POST",
+      path: `/field/installations/${recordId}/files`,
+      label: "Photo",
+      localId: photoId,
+      file: { blob: new Blob(["x"], { type: "image/jpeg" }), name: "a.jpg", fields: { slot: "FRONT" } },
+    });
+    setOnline(true);
+    respond = (c) => (c.path === "/field/installations" ? { id: "inst-7" } : { id: "att-7" });
+    await flushOutbox();
+    expect(calls.map((c) => c.path)).toEqual(["/field/installations", "/field/installations/inst-7/files"]);
+    expect(calls[1].form?.get("slot")).toBe("FRONT");
+  });
+
+  it("a queued photo whose file has gone from the phone fails with a clear message", async () => {
+    setOnline(false);
+    const localId = newLocalId();
+    await write({
+      method: "POST",
+      path: "/field/jobs/wo1/attachments",
+      label: "Photo",
+      localId,
+      file: { blob: new Blob(["x"], { type: "image/jpeg" }), name: "a.jpg", fields: { phase: "BEFORE" } },
+    });
+    files.clear();
+    setOnline(true);
+    await flushOutbox();
+    const [item] = await listOutbox();
+    expect(item).toMatchObject({ status: "failed", error: "The photo or video is no longer on the phone." });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("giving up on a waiting photo deletes its file", async () => {
+    setOnline(false);
+    const localId = newLocalId();
+    await write({
+      method: "POST",
+      path: "/field/jobs/wo1/attachments",
+      label: "Photo",
+      localId,
+      file: { blob: new Blob(["x"], { type: "image/jpeg" }), name: "a.jpg", fields: { phase: "BEFORE" } },
+    });
+    const [item] = await listOutbox();
+    await discardChange(item.seq);
+    expect(files.has(localId)).toBe(false);
+  });
+
+  it("a photo on a record is shown and removed on an installation too", async () => {
+    setOnline(false);
+    await installationsCache.saveDetail({
+      id: "inst-1", vehicleNo: "A", deviceId: "D", customerName: "C", deviceType: "GPS tracker", location: "L", installDate: "2026-11-26",
+      createdBy: null, createdAt: "2026-11-26T00:00:00Z", status: "ON_HOLD", holdReason: "r", holdBy: "", customerId: null, simNo: null, fill: null,
+      fillHistory: [], holdAt: null, latitude: null, longitude: null, hasTempSensor: false, checklist: [], notes: null, files: [], photos: [],
+    });
+    await optimistic.installationFile("inst-1", { id: "local-p1xxxxxxxx", name: "a.jpg", kind: "PHOTO", slot: "FRONT", type: "image/jpeg" });
+    await optimistic.installationFile("inst-1", { id: "local-p2xxxxxxxx", name: "b.jpg", kind: "PHOTO", slot: null, type: "image/jpeg" });
+    await optimistic.installationFile("inst-1", { id: "local-vxxxxxxxxx", name: "v.mp4", kind: "VIDEO", slot: null, type: "video/mp4" });
+    let d = await installationsCache.loadDetail("inst-1");
+    expect(d?.files.map((m) => m.id)).toEqual(["local-p1xxxxxxxx", "local-vxxxxxxxxx"]);
+    expect(d?.photos.map((m) => m.id)).toEqual(["local-p2xxxxxxxx"]);
+    await optimistic.installationFileRemoved("inst-1", "local-p1xxxxxxxx");
+    d = await installationsCache.loadDetail("inst-1");
+    expect(d?.files.map((m) => m.id)).toEqual(["local-vxxxxxxxxx"]);
+  });
+
+  // ---- GPS ----
+
+  const fix = (n: number) => ({ latitude: 24 + n / 1000, longitude: 67, accuracy: 10 });
+
+  it("sends a reading at once when there is a signal", async () => {
+    await recordReading(fix(1));
+    expect(calls.map((c) => c.path)).toEqual(["/field/location"]);
+    expect(await gpsBacklog()).toBe(0);
+  });
+
+  it("keeps readings taken without a signal with their time and sends them in order as one batch", async () => {
+    setOnline(false);
+    await recordReading(fix(1));
+    await recordReading(fix(2));
+    await recordReading(fix(3));
+    expect(calls).toHaveLength(0);
+    expect(await gpsBacklog()).toBe(3);
+
+    setOnline(true);
+    respond = () => ({ saved: 3, skipped: 0 });
+    expect(await flushGps()).toBe(3);
+    expect(calls).toHaveLength(1);
+    const body = calls[0].body as { points: { latitude: number; recordedAt: string }[] };
+    expect(calls[0].path).toBe("/field/location/batch");
+    expect(body.points.map((p) => p.latitude)).toEqual([24.001, 24.002, 24.003]);
+    expect(body.points.every((p) => !Number.isNaN(Date.parse(p.recordedAt)))).toBe(true);
+    expect(calls[0].idempotencyKey).toMatch(/^gps-/);
+    expect(await gpsBacklog()).toBe(0);
+  });
+
+  it("a batch that could not be sent stays, and goes out again with the same key", async () => {
+    setOnline(false);
+    await recordReading(fix(1));
+    setOnline(true);
+    respond = () => {
+      throw noSignal();
+    };
+    expect(await flushGps()).toBe(0);
+    expect(await gpsBacklog()).toBe(1);
+    respond = () => ({ saved: 1, skipped: 0 });
+    await flushGps();
+    expect(calls).toHaveLength(2);
+    expect(calls[0].idempotencyKey).toBe(calls[1].idempotencyKey);
+    expect(await gpsBacklog()).toBe(0);
+  });
+
+  it("a new reading waits behind older ones so the history stays in order", async () => {
+    setOnline(false);
+    await recordReading(fix(1));
+    setOnline(true);
+    respond = () => {
+      throw noSignal();
+    };
+    await recordReading(fix(2));
+    expect(await gpsBacklog()).toBe(2);
+  });
+
+  it("readings the server refuses are dropped, not retried forever", async () => {
+    setOnline(false);
+    await recordReading(fix(1));
+    setOnline(true);
+    respond = () => {
+      throw new ApiError("Validation failed.", 400);
+    };
+    await flushGps();
+    expect(await gpsBacklog()).toBe(0);
+  });
+
+  it("the outbox sends GPS readings after the queued changes", async () => {
+    setOnline(false);
+    await write({ method: "POST", path: "/a", label: "A" });
+    await recordReading(fix(1));
+    setOnline(true);
+    await flushOutbox();
+    expect(calls.map((c) => c.path)).toEqual(["/a", "/field/location/batch"]);
   });
 });

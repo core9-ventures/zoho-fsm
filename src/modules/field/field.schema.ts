@@ -15,6 +15,18 @@ export const locationSchema = z.object({
 });
 export type LocationInput = z.infer<typeof locationSchema>;
 
+/** Most readings one batch may hold (the phone sends what it collected without a signal, 100 at a time). */
+export const MAX_LOCATION_BATCH = 200;
+
+/** GPS readings collected on the phone while it had no signal, each with the time it was taken. */
+export const locationBatchSchema = z.object({
+  points: z
+    .array(locationSchema.extend({ recordedAt: z.string().datetime({ offset: true }) }))
+    .min(1)
+    .max(MAX_LOCATION_BATCH),
+});
+export type LocationBatchInput = z.infer<typeof locationBatchSchema>;
+
 export const FIELD_ACTIONS = ["on-my-way", "start", "hold", "resume", "complete"] as const;
 export type FieldAction = (typeof FIELD_ACTIONS)[number];
 

@@ -7,6 +7,7 @@ import type {
   FieldJobDetail,
   FieldJobList,
   LiveTechnician,
+  LocationBatchInput,
   LocationInput,
   PartOption,
   TransitionInput,
@@ -332,6 +333,30 @@ export const fieldService = {
         recordedAt: new Date(),
       },
     });
+  },
+
+  /**
+   * Readings the phone collected without a signal. Each keeps the time it was taken (a time in the future is
+   * moved to now, one older than a week is dropped), so the history and the live map stay truthful.
+   */
+  async recordLocations(db: AppDb, actor: CurrentUser, input: LocationBatchInput) {
+    const now = Date.now();
+    const oldest = now - 7 * 24 * 3600_000;
+    const rows = input.points
+      .map((p) => ({ p, at: Math.min(Date.parse(p.recordedAt), now) }))
+      .filter(({ at }) => at >= oldest)
+      .map(({ p, at }) => ({
+        companyId: companyOf(actor),
+        technicianId: actor.id,
+        latitude: toDec(p.latitude)!,
+        longitude: toDec(p.longitude)!,
+        accuracy: toDec2(p.accuracy),
+        speed: toDec2(p.speed),
+        heading: toDec2(p.heading),
+        recordedAt: new Date(at),
+      }));
+    if (rows.length > 0) await db.technicianLocation.createMany({ data: rows });
+    return { saved: rows.length, skipped: input.points.length - rows.length };
   },
 
   /** Every active technician with their latest position (last 24 h) and current job. */

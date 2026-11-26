@@ -4,6 +4,7 @@ import type {
   InstallationInput,
   InstallationListItem,
 } from "@/modules/installations/installations.schema";
+import type { MediaDto } from "@/modules/work-orders/work-orders.schema";
 import type { FieldAction, FieldJob, FieldJobDetail } from "../api/jobTypes";
 import { customersCache, installationsCache, jobsCache } from "./cache";
 import { getDb } from "./db";
@@ -50,7 +51,58 @@ async function patchJob(id: string, patch: (j: FieldJobDetail) => FieldJobDetail
   if (job) await jobsCache.saveDetail(patch(job));
 }
 
+const media = (id: string, name: string, kind: "PHOTO" | "VIDEO", slot: string | null, type: string, by: string | null): MediaDto => ({
+  id,
+  fileName: name,
+  kind,
+  contentType: type || null,
+  slot,
+  createdAt: new Date().toISOString(),
+  author: null,
+  authorId: by,
+});
+
+async function patchInstallation(id: string, patch: (d: InstallationDetail) => InstallationDetail) {
+  const d = await installationsCache.loadDetail(id);
+  if (d) await installationsCache.saveDetail(patch(d));
+}
+
+export type QueuedFile = { id: string; name: string; kind: "PHOTO" | "VIDEO"; slot: string | null; type: string };
+
 export const optimistic = {
+  /** A photo or video added to a job (phase BEFORE or AFTER): a labeled box holds one photo, a new one replaces it. */
+  jobFile: (jobId: string, phase: "BEFORE" | "AFTER", f: QueuedFile) =>
+    patchJob(jobId, (j) => {
+      const key = phase === "BEFORE" ? "before" : "after";
+      const keep = j.evidence[key].filter((m) => !(f.slot && m.slot === f.slot && m.kind === "PHOTO"));
+      return { ...j, evidence: { ...j.evidence, [key]: [...keep, media(f.id, f.name, f.kind, f.slot, f.type, j.meId)] } };
+    }),
+
+  jobFileRemoved: (jobId: string, attachmentId: string) =>
+    patchJob(jobId, (j) => ({
+      ...j,
+      evidence: {
+        before: j.evidence.before.filter((m) => m.id !== attachmentId),
+        after: j.evidence.after.filter((m) => m.id !== attachmentId),
+      },
+    })),
+
+  /** A photo or video added to an installation: labeled photos and the video go in `files`, the others in `photos`. */
+  installationFile: (id: string, f: QueuedFile) =>
+    patchInstallation(id, (d) => {
+      const entry = media(f.id, f.name, f.kind, f.slot, f.type, null);
+      if (f.kind === "VIDEO") return { ...d, files: [...d.files.filter((m) => m.kind !== "VIDEO"), entry] };
+      if (f.slot) return { ...d, files: [...d.files.filter((m) => !(m.slot === f.slot && m.kind === "PHOTO")), entry] };
+      return { ...d, photos: [...d.photos, entry] };
+    }),
+
+  installationFileRemoved: (id: string, attachmentId: string) =>
+    patchInstallation(id, (d) => ({
+      ...d,
+      files: d.files.filter((m) => m.id !== attachmentId),
+      photos: d.photos.filter((m) => m.id !== attachmentId),
+    })),
+
   /** A status change of a job (on my way, start, hold, resume, complete). */
   transition: async (id: string, action: FieldAction, at = new Date()) => {
     const status = STATUS_AFTER[action];

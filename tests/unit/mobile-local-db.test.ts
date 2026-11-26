@@ -87,7 +87,7 @@ describe.skipIf(!sqliteModule)("phone database migrations", () => {
     const db = holder.db!;
     await migrate(db); // a second run must change nothing
     const tables = (await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
-    for (const t of ["meta", "jobs", "job_details", "installations", "installation_details", "customers", "outbox", "id_map"]) {
+    for (const t of ["meta", "jobs", "job_details", "installations", "installation_details", "customers", "outbox", "id_map", "gps_points"]) {
       expect(tables).toContain(t);
     }
     expect((await db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'schema_version'"))[0].value).toBe(String(LATEST_VERSION));

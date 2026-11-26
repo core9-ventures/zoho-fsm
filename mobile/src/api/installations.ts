@@ -9,7 +9,7 @@ import type {
 } from "@/modules/installations/installations.schema";
 import { customersCache, installationsCache } from "../local/cache";
 import { optimistic } from "../local/optimistic";
-import { isLocalId, newLocalId, resolveId, write } from "../local/outbox";
+import { cancelQueuedFile, isLocalId, newLocalId, resolveId, write } from "../local/outbox";
 import { readThrough } from "../local/readThrough";
 import { ApiError, http } from "./http";
 import { authApi } from "./auth";
@@ -121,17 +121,36 @@ export const fieldInstallations = {
     await installationsCache.remove(id);
     return res;
   },
-  /** Adds a photo (with `slot` for a labeled box) or the Device video. */
+  /**
+   * Adds a photo (with `slot` for a labeled box) or the Device video. Without a signal the file is kept on the phone
+   * and uploaded later; a record that exists only on the phone can take photos too (they follow it to the server).
+   */
   uploadFile: async (id: string, file: Blob, fileName: string, slot?: string) => {
-    const real = await resolveId(id);
-    if (isLocalId(real)) throw new ApiError("Photos can be added once the record has reached the server.", 0);
-    const form = new FormData();
-    form.set("file", file, fileName);
-    if (slot) form.set("slot", slot);
-    return http.upload<unknown>(`/field/installations/${real}/files`, form);
+    const localId = newLocalId();
+    const kind = file.type.startsWith("video/") ? "VIDEO" : "PHOTO";
+    return write<unknown>({
+      method: "POST",
+      path: `/field/installations/${id}/files`,
+      label: `${kind === "VIDEO" ? "Video" : "Photo"} for an installation`,
+      localId,
+      file: { blob: file, name: fileName, fields: slot ? { slot } : {} },
+      optimistic: () => optimistic.installationFile(id, { id: localId, name: fileName, kind, slot: slot ?? null, type: file.type }),
+    });
   },
-  deleteFile: (id: string, attachmentId: string) =>
-    http.delete<null>(`/field/installations/${id}/files/${attachmentId}`),
+  deleteFile: async (id: string, attachmentId: string) => {
+    if (isLocalId(attachmentId) && (await cancelQueuedFile(attachmentId))) {
+      await optimistic.installationFileRemoved(id, attachmentId);
+      return { queued: true as const };
+    }
+    const real = await resolveId(attachmentId);
+    if (isLocalId(real)) throw new ApiError("This photo was not found on the phone.", 404);
+    return write<null>({
+      method: "DELETE",
+      path: `/field/installations/${id}/files/${real}`,
+      label: "Remove a photo from an installation",
+      optimistic: () => optimistic.installationFileRemoved(id, attachmentId),
+    });
+  },
 };
 
 /** What the office screens call (Admin, Dispatcher). */

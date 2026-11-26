@@ -1,5 +1,7 @@
 import { ApiError, request } from "../api/http";
 import { getDb, isLocalDbAvailable } from "./db";
+import { fileStore } from "./fileStore";
+import { flushGps } from "./gps";
 
 /**
  * The outbox: every change a technician makes is first saved on the phone, then sent to the server in the order it was
@@ -35,6 +37,9 @@ type Row = {
   error: string | null;
   attempts: number;
   created_at: number;
+  file_name: string | null;
+  file_type: string | null;
+  file_fields: string | null;
 };
 
 export const LOCAL_ID_PREFIX = "local-";
@@ -112,7 +117,19 @@ export type Change = {
   localId?: string;
   /** Shows the change on the phone straight away (the saved copy of the job or record). */
   optimistic?: () => Promise<void>;
+  /**
+   * A photo or video to upload (sent as multipart, `body` is not used). Needs `localId`: the file is kept on the
+   * phone under it until the server has it, and the screens show it from there in the meantime.
+   */
+  file?: { blob: Blob; name: string; fields: Record<string, string> };
 };
+
+function formOf(file: NonNullable<Change["file"]>) {
+  const form = new FormData();
+  form.set("file", file.blob, file.name);
+  for (const [k, v] of Object.entries(file.fields)) form.set(k, v);
+  return form;
+}
 
 export type WriteResult<T> = { queued: false; data: T } | { queued: true; data?: undefined };
 
@@ -133,7 +150,9 @@ let running: Promise<FlushResult> | null = null;
 export async function write<T>(change: Change): Promise<WriteResult<T>> {
   const db = isLocalDbAvailable() ? await getDb() : null;
   const key = newKey();
-  const opts = { body: change.body, idempotencyKey: key };
+  const opts = change.file
+    ? { form: formOf(change.file), idempotencyKey: key }
+    : { body: change.body, idempotencyKey: key };
   if (!db) return { queued: false, data: await request<T>(change.method, change.path, opts) };
 
   if (status.pending === 0 && !sending && !offline()) {
@@ -144,9 +163,14 @@ export async function write<T>(change: Change): Promise<WriteResult<T>> {
     }
   }
 
+  if (change.file) {
+    if (!change.localId) throw new Error("A file change needs a temporary id.");
+    // The file goes to the phone's storage first: if that fails, nothing is queued and the screen shows the error.
+    await fileStore.save(change.localId, change.file.blob);
+  }
   await db.batch([
     {
-      sql: "INSERT INTO outbox (key, method, path, body, label, local_id, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?)",
+      sql: "INSERT INTO outbox (key, method, path, body, label, local_id, status, attempts, created_at, file_name, file_type, file_fields) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)",
       params: [
         key,
         change.method,
@@ -155,6 +179,9 @@ export async function write<T>(change: Change): Promise<WriteResult<T>> {
         change.label,
         change.localId ?? null,
         Date.now(),
+        change.file?.name ?? null,
+        change.file?.blob.type ?? null,
+        change.file ? JSON.stringify(change.file.fields) : null,
       ],
     },
   ]);
@@ -219,9 +246,24 @@ export function flushOutbox(): Promise<FlushResult> {
           ]);
           continue;
         }
+        let form: FormData | undefined;
+        if (row.file_name && row.local_id) {
+          const blob = await fileStore.read(row.local_id);
+          if (!blob) {
+            await db.batch([
+              {
+                sql: "UPDATE outbox SET status = 'failed', error = ? WHERE seq = ?",
+                params: ["The photo or video is no longer on the phone.", row.seq],
+              },
+            ]);
+            continue;
+          }
+          form = formOf({ blob, name: row.file_name, fields: JSON.parse(row.file_fields ?? "{}") as Record<string, string> });
+        }
         try {
           const data = await request<unknown>(row.method as Change["method"], ready.path, {
-            body: ready.body,
+            body: form ? undefined : ready.body,
+            form,
             idempotencyKey: row.key,
           });
           const created = row.local_id && data && typeof data === "object" ? (data as { id?: unknown }).id : null;
@@ -238,6 +280,7 @@ export function flushOutbox(): Promise<FlushResult> {
               : []),
             { sql: "DELETE FROM outbox WHERE seq = ?", params: [row.seq] },
           ]);
+          if (row.file_name && row.local_id) await fileStore.remove(row.local_id);
           sent++;
         } catch (e) {
           const message = e instanceof Error ? e.message : "The change could not be sent.";
@@ -256,6 +299,8 @@ export function flushOutbox(): Promise<FlushResult> {
           ]);
         }
       }
+      // GPS readings taken without a signal go out once the queue got through.
+      if (!stopped) await flushGps();
       return { sent, stopped };
     } catch (e) {
       console.error("Outbox error", e);
@@ -281,6 +326,23 @@ export async function retryFailed(): Promise<void> {
 /** Drops one waiting or refused change (the technician chose to give it up). */
 export async function discardChange(seq: number): Promise<void> {
   const db = await getDb();
+  const row = db ? (await db.all<Row>("SELECT * FROM outbox WHERE seq = ?", [seq]))[0] : null;
+  if (row?.file_name && row.local_id) await fileStore.remove(row.local_id);
   await db?.batch([{ sql: "DELETE FROM outbox WHERE seq = ?", params: [seq] }]);
   await refreshOutboxStatus();
+}
+
+/**
+ * Takes back a photo or video that is still waiting to be uploaded (the technician removed it again).
+ * Returns false when it is not in the queue any more (it was uploaded: then it has a real id to delete).
+ */
+export async function cancelQueuedFile(localId: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const row = (await db.all<Row>("SELECT * FROM outbox WHERE local_id = ? AND file_name IS NOT NULL", [localId]))[0];
+  if (!row) return false;
+  await db.batch([{ sql: "DELETE FROM outbox WHERE seq = ?", params: [row.seq] }]);
+  await fileStore.remove(localId);
+  await refreshOutboxStatus();
+  return true;
 }

@@ -312,14 +312,11 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
         return;
       }
       const { id, queued } = await fieldInstallations.create(input);
-      if (queued) {
-        if (local.length > 0) toast.error("Photos could not be saved without a signal. Take them again once you are online.");
-        toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved on this phone. It is sent when you have a signal.`);
-      } else {
-        const failed = await uploadLocal(id);
-        if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be uploaded. The record itself is saved.`);
-        else toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved.`);
-      }
+      // Photos follow the record: with a signal they upload now, without one they wait on the phone with it.
+      const failed = await uploadLocal(id);
+      if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be saved. The record itself is saved.`);
+      else if (queued) toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved on this phone. It is sent when you have a signal.`);
+      else toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved.`);
       reset();
       goOn();
     } catch (err) {
@@ -354,14 +351,10 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
         return;
       }
       const { id, queued } = await fieldInstallations.hold(input);
-      if (queued) {
-        if (local.length > 0) toast.error("Photos could not be saved without a signal. Take them again once you are online.");
-        toast.success("Put on hold on this phone. It is sent when you have a signal.");
-      } else {
-        const failed = await uploadLocal(id);
-        if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be uploaded to the held record.`);
-        else toast.success("Put on hold. Find it under On hold on My jobs.");
-      }
+      const failed = await uploadLocal(id);
+      if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be saved to the held record.`);
+      else if (queued) toast.success("Put on hold on this phone. It is sent when you have a signal.");
+      else toast.success("Put on hold. Find it under On hold on My jobs.");
       reset();
       setHoldOpen(false);
       goOn();
