@@ -1,4 +1,5 @@
 import { apiBaseUrl, REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from "../config";
+import { wipeLocalData } from "../local/db";
 import { clearTokens, readTokens, saveTokens, type Tokens } from "./tokens";
 
 /** The server's response envelope. */
@@ -35,6 +36,12 @@ export const onSessionLost = (fn: () => void) => {
 };
 const sessionLost = () => {
   clearTokens();
+  try {
+    localStorage.removeItem("fs.user");
+  } catch {
+    /* ignore */
+  }
+  void wipeLocalData();
   lostListeners.forEach((fn) => fn());
 };
 

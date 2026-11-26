@@ -36,11 +36,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       .me()
       .then(async (me) => {
         if (cancelled) return;
-        if (roleOf(me)) setUser(me);
-        else await authApi.logout();
+        if (roleOf(me)) {
+          await authApi.openLocalData(me);
+          if (!cancelled) setUser(me);
+        } else await authApi.logout();
       })
-      .catch(() => {
-        /* a lost session is handled by onSessionLost; a network error leaves the sign-in screen up */
+      .catch(async (e) => {
+        // No signal: a technician who signed in before keeps working from the saved data. A lost session is
+        // handled by onSessionLost, and any other error leaves the sign-in screen up.
+        if (!(e instanceof ApiError && e.isNetwork)) return;
+        const saved = authApi.cachedUser();
+        if (!saved || saved.role !== "TECHNICIAN" || !authApi.hasTokens()) return;
+        await authApi.openLocalData(saved);
+        if (!cancelled) setUser(saved);
       })
       .finally(() => {
         if (!cancelled) setRestoring(false);

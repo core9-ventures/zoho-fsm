@@ -1,4 +1,6 @@
 import type { FieldJobDetail, FieldJobList, LocationInput, TransitionInput } from "./jobTypes";
+import { jobsCache } from "../local/cache";
+import { readThrough } from "../local/readThrough";
 import { http, requestBlob } from "./http";
 
 export type { FieldJob, FieldJobDetail, FieldJobList, LocationInput, TransitionInput } from "./jobTypes";
@@ -7,8 +9,13 @@ export { FIELD_ACTION_LABEL } from "./jobTypes";
 /** The technician's jobs. */
 export const fieldJobs = {
   /** Open visits plus the last 3 days. */
-  list: () => http.get<FieldJobList>("/field/jobs"),
-  get: (id: string) => http.get<FieldJobDetail>(`/field/jobs/${id}`),
+  list: () => readThrough(() => http.get<FieldJobList>("/field/jobs"), jobsCache.save, jobsCache.load),
+  get: (id: string) =>
+    readThrough(
+      () => http.get<FieldJobDetail>(`/field/jobs/${id}`),
+      jobsCache.saveDetail,
+      () => jobsCache.loadDetail(id),
+    ),
   /** on-my-way, start, hold (with a reason), resume, complete. */
   transition: (id: string, input: TransitionInput) => http.post<unknown>(`/field/jobs/${id}/transition`, input),
   addNote: (id: string, text: string) => http.post<null>(`/field/jobs/${id}/notes`, { text }),

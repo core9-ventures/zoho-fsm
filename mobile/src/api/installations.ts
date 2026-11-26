@@ -7,6 +7,8 @@ import type {
   InstallationListItem,
   InstallationListQuery,
 } from "@/modules/installations/installations.schema";
+import { customersCache, installationsCache } from "../local/cache";
+import { readThrough } from "../local/readThrough";
 import { http } from "./http";
 
 // The input shapes are the server's own zod types, so the app and the server cannot drift apart.
@@ -26,9 +28,24 @@ type ListQuery = Partial<Pick<InstallationListQuery, "page" | "pageSize" | "sear
 /** What the technician's screens call. */
 export const fieldInstallations = {
   /** The companies (and their saved sites) to pick from. */
-  options: () => http.get<CustomerChoice[]>("/field/installations/options"),
-  list: (q: ListQuery = {}) => http.get<PagedResult<InstallationListItem>>("/field/installations", q),
-  get: (id: string) => http.get<InstallationDetail>(`/field/installations/${id}`),
+  options: () =>
+    readThrough(
+      () => http.get<CustomerChoice[]>("/field/installations/options"),
+      customersCache.save,
+      customersCache.load,
+    ),
+  list: (q: ListQuery = {}) =>
+    readThrough(
+      () => http.get<PagedResult<InstallationListItem>>("/field/installations", q),
+      (res) => installationsCache.saveList(res.items),
+      () => installationsCache.loadList(q),
+    ),
+  get: (id: string) =>
+    readThrough(
+      () => http.get<InstallationDetail>(`/field/installations/${id}`),
+      installationsCache.saveDetail,
+      () => installationsCache.loadDetail(id),
+    ),
   /** A finished record. Photos follow one by one through `uploadFile`. */
   create: (input: InstallationInput) => http.post<{ id: string }>("/field/installations", input),
   /** Saves a half-filled record as ON_HOLD (a reason is required). */
@@ -40,7 +57,11 @@ export const fieldInstallations = {
   complete: (id: string, input: InstallationInput) =>
     http.post<{ id: string }>(`/field/installations/${id}/complete`, input),
   /** Deletes a held record (and its photos). */
-  discard: (id: string) => http.delete<null>(`/field/installations/${id}`),
+  discard: async (id: string) => {
+    const res = await http.delete<null>(`/field/installations/${id}`);
+    await installationsCache.remove(id);
+    return res;
+  },
   /** Adds a photo (with `slot` for a labeled box) or the Device video. */
   uploadFile: (id: string, file: Blob, fileName: string, slot?: string) => {
     const form = new FormData();
