@@ -6,6 +6,7 @@ import { z, ZodError } from "zod";
 import { dbFor, requirePermission, requireRole, requireUser, type CurrentUser } from "./auth";
 import type { AppDb } from "./db";
 import { AppError, type FieldErrors } from "./errors";
+import { idempotency } from "./idempotency";
 import { logger } from "./logger";
 import { clientIp, rateLimit } from "./rate-limit";
 import type { AppRole } from "./roles";
@@ -56,8 +57,45 @@ export function route<TBody = undefined, TQuery = undefined>(
     const user = await requireUser(base.req.headers);
     if (opts.roles) requireRole(user, opts.roles);
     requirePermission(user, permissionForApi(base.req.nextUrl.pathname, base.req.method));
-    return handler({ ...base, user, db: dbFor(user) });
+    const run = () => handler({ ...base, user, db: dbFor(user) });
+    return withIdempotency(base.req, user.id, run);
   });
+}
+
+/**
+ * A write call with an `Idempotency-Key` header runs once: a repeat with the same key gets the first answer back
+ * (marked `Idempotent-Replay: true`) instead of changing anything again. Calls without the header run as usual.
+ */
+async function withIdempotency(req: NextRequest, userId: string, run: () => Promise<Result>): Promise<Result> {
+  const key = req.headers.get("idempotency-key")?.trim();
+  if (!key || req.method === "GET" || req.method === "HEAD") return run();
+  if (key.length > 100) throw new AppError("Idempotency-Key is too long.", 400, "BAD_IDEMPOTENCY_KEY");
+
+  const begin = await idempotency.begin(userId, key, req.method, req.nextUrl.pathname);
+  if (begin.kind === "replay") {
+    const res = new NextResponse(begin.answer.body, {
+      status: begin.answer.status,
+      headers: { "content-type": "application/json", "idempotent-replay": "true" },
+    });
+    return res;
+  }
+  if (begin.kind === "busy") throw new AppError("This change is still being saved. Try again in a moment.", 409, "IDEMPOTENCY_BUSY");
+  if (begin.kind === "mismatch") throw new AppError("This Idempotency-Key was used for a different call.", 422, "IDEMPOTENCY_MISMATCH");
+
+  let response: Response;
+  try {
+    const result = await run();
+    response = result instanceof Response ? result : ok(result);
+  } catch (err) {
+    response = toErrorResponse(err);
+  }
+  if (response.status >= 500) {
+    await idempotency.release(userId, key).catch(() => undefined);
+    return response;
+  }
+  const body = await response.clone().text();
+  await idempotency.finish(userId, key, { status: response.status, body });
+  return response;
 }
 
 /** Same as `route` but without authentication (login, token refresh, health). */

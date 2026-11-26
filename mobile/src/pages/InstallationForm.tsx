@@ -302,15 +302,24 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
         fill: { lat: pos.fix.lat, lng: pos.fix.lng, accuracy: pos.fix.accuracy },
       };
       if (held) {
-        await fieldInstallations.complete(held.id, input);
-        toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved.`);
+        const res = await fieldInstallations.complete(held.id, input);
+        toast.success(
+          res.queued
+            ? `Record for ${vehicleNo.trim().toUpperCase()} saved on this phone. It is sent when you have a signal.`
+            : `Record for ${vehicleNo.trim().toUpperCase()} saved.`,
+        );
         goOn();
         return;
       }
-      const { id } = await fieldInstallations.create(input);
-      const failed = await uploadLocal(id);
-      if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be uploaded. The record itself is saved.`);
-      else toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved.`);
+      const { id, queued } = await fieldInstallations.create(input);
+      if (queued) {
+        if (local.length > 0) toast.error("Photos could not be saved without a signal. Take them again once you are online.");
+        toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved on this phone. It is sent when you have a signal.`);
+      } else {
+        const failed = await uploadLocal(id);
+        if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be uploaded. The record itself is saved.`);
+        else toast.success(`Record for ${vehicleNo.trim().toUpperCase()} saved.`);
+      }
       reset();
       goOn();
     } catch (err) {
@@ -339,15 +348,20 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
         fill: fix ? { lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy } : null,
       };
       if (held) {
-        await fieldInstallations.updateHeld(held.id, input);
-        toast.success("Put on hold.");
+        const res = await fieldInstallations.updateHeld(held.id, input);
+        toast.success(res.queued ? "Put on hold on this phone. It is sent when you have a signal." : "Put on hold.");
         goOn();
         return;
       }
-      const { id } = await fieldInstallations.hold(input);
-      const failed = await uploadLocal(id);
-      if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be uploaded to the held record.`);
-      else toast.success("Put on hold. Find it under On hold on My jobs.");
+      const { id, queued } = await fieldInstallations.hold(input);
+      if (queued) {
+        if (local.length > 0) toast.error("Photos could not be saved without a signal. Take them again once you are online.");
+        toast.success("Put on hold on this phone. It is sent when you have a signal.");
+      } else {
+        const failed = await uploadLocal(id);
+        if (failed > 0) toast.error(`${failed} file${failed === 1 ? "" : "s"} could not be uploaded to the held record.`);
+        else toast.success("Put on hold. Find it under On hold on My jobs.");
+      }
       reset();
       setHoldOpen(false);
       goOn();
@@ -366,8 +380,8 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
       // On a held record this deletes the record itself (and its photos).
       setBusy(true);
       try {
-        await fieldInstallations.discard(held.id);
-        toast.success("Held installation deleted.");
+        const res = await fieldInstallations.discard(held.id);
+        toast.success(res.queued ? "Deleted on this phone. It is removed from the server when you have a signal." : "Held installation deleted.");
         goOn();
       } catch (err) {
         showServerError(err);

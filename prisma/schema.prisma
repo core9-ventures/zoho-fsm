@@ -244,6 +244,22 @@ model RefreshToken {
   @@index([userId])
 }
 
+/// One write call of the phone's outbox, remembered so a retry of the same call is not applied twice.
+model IdempotencyKey {
+  id        String   @id @default(cuid())
+  userId    String
+  key       String
+  method    String
+  path      String
+  /// 0 while the call is running, then the HTTP status of its answer.
+  status    Int
+  body      String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, key])
+  @@index([createdAt])
+}
+
 model TechnicianProfile {
   id          String    @id @default(cuid())
   companyId   String

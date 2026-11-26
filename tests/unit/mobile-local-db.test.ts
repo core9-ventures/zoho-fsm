@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { migrate } from "../../mobile/src/local/migrations";
+import { LATEST_VERSION, MIGRATIONS, migrate } from "../../mobile/src/local/migrations";
 import type { Db } from "../../mobile/src/local/types";
 
 // The cache talks to the phone database through getDb(); here it is a real SQLite database in memory (the same SQL
@@ -87,10 +87,24 @@ describe.skipIf(!sqliteModule)("phone database migrations", () => {
     const db = holder.db!;
     await migrate(db); // a second run must change nothing
     const tables = (await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
-    for (const t of ["meta", "jobs", "job_details", "installations", "installation_details", "customers"]) {
+    for (const t of ["meta", "jobs", "job_details", "installations", "installation_details", "customers", "outbox", "id_map"]) {
       expect(tables).toContain(t);
     }
-    expect((await db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'schema_version'"))[0].value).toBe("1");
+    expect((await db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'schema_version'"))[0].value).toBe(String(LATEST_VERSION));
+  });
+
+  it("a phone that has version 1 gets the outbox tables without losing its saved jobs", async () => {
+    const old = memoryDb();
+    await old.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    await old.batch([
+      ...MIGRATIONS[0].statements.map((sql) => ({ sql })),
+      { sql: "INSERT INTO meta (key, value) VALUES ('schema_version', '1')" },
+      { sql: "INSERT INTO job_details (id, data, saved_at, deleted) VALUES ('wo1', '{}', 1, 0)" },
+    ]);
+    await migrate(old);
+    const tables = (await old.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
+    expect(tables).toEqual(expect.arrayContaining(["outbox", "id_map"]));
+    expect((await old.all("SELECT id FROM job_details")).length).toBe(1);
   });
 });
 

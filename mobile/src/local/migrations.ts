@@ -60,6 +60,32 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 2,
+    statements: [
+      // Changes made on the phone that the server has not received yet, oldest first (Phase 3, the outbox).
+      // `status` is pending (will be sent) or failed (the server refused it; the technician decides what to do).
+      // `key` is the Idempotency-Key: every send of one change uses the same key, so the server applies it once.
+      `CREATE TABLE IF NOT EXISTS outbox (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT NOT NULL UNIQUE,
+        method TEXT NOT NULL,
+        path TEXT NOT NULL,
+        body TEXT,
+        label TEXT NOT NULL,
+        local_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )`,
+      // A record created on the phone gets a temporary id; once the server saved it, this says which real id it got.
+      `CREATE TABLE IF NOT EXISTS id_map (
+        local_id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL
+      )`,
+    ],
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

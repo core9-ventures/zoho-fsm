@@ -41,7 +41,8 @@ const sessionLost = () => {
   } catch {
     /* ignore */
   }
-  void wipeLocalData();
+  // Changes that were never sent stay on the phone for the next sign-in.
+  void wipeLocalData({ keepUnsent: true });
   lostListeners.forEach((fn) => fn());
 };
 
@@ -55,6 +56,8 @@ type Options = {
   auth?: boolean;
   /** Overrides the default give-up time. */
   timeoutMs?: number;
+  /** Sent as Idempotency-Key: the server applies a change with this key only once, however often it is sent. */
+  idempotencyKey?: string;
 };
 
 function urlFor(path: string, query?: Options["query"]) {
@@ -72,6 +75,7 @@ async function send(method: string, path: string, opts: Options, accessToken: st
   const headers: Record<string, string> = { Accept: "application/json", "X-Request-Id": newId() };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
   try {
     return await fetch(urlFor(path, opts.query), {
       method,
@@ -100,13 +104,13 @@ async function refreshTokens(): Promise<Tokens | null> {
   if (!current) return null;
   refreshing ??= (async () => {
     try {
+      // No signal is not the same as a refused token: a network error is passed on, so the session is kept.
       const res = await send("POST", "/auth/refresh", { body: { refreshToken: current.refreshToken } }, null);
       const json = (await res.json().catch(() => null)) as Envelope<Tokens> | null;
+      if (res.status >= 500) throw new ApiError("The server is not available right now.", 0);
       if (!res.ok || !json?.success || !json.data) return null;
       saveTokens(json.data);
       return json.data;
-    } catch {
-      return null;
     } finally {
       setTimeout(() => (refreshing = null), 0);
     }
@@ -157,8 +161,8 @@ export async function requestBlob(path: string, query?: Options["query"]): Promi
 export const http = {
   get: <T>(path: string, query?: Options["query"]) => request<T>("GET", path, { query }),
   post: <T>(path: string, body?: unknown, opts: Options = {}) => request<T>("POST", path, { ...opts, body }),
-  put: <T>(path: string, body: unknown) => request<T>("PUT", path, { body }),
-  patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, { body }),
-  delete: <T>(path: string) => request<T>("DELETE", path),
+  put: <T>(path: string, body: unknown, opts: Options = {}) => request<T>("PUT", path, { ...opts, body }),
+  patch: <T>(path: string, body: unknown, opts: Options = {}) => request<T>("PATCH", path, { ...opts, body }),
+  delete: <T>(path: string, opts: Options = {}) => request<T>("DELETE", path, opts),
   upload: <T>(path: string, form: FormData) => request<T>("POST", path, { form }),
 };

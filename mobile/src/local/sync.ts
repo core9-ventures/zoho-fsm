@@ -2,6 +2,7 @@ import { ApiError } from "../api/http";
 import { syncApi } from "../api/sync";
 import { syncCache } from "./cache";
 import { getDb, isLocalDbAvailable } from "./db";
+import { flushOutbox, outboxStatus, refreshOutboxStatus } from "./outbox";
 
 /**
  * Keeps the phone database up to date with the server: jobs of the next 7 days plus the ones in progress, the
@@ -43,6 +44,7 @@ export const syncStatus = {
 /** Reads the time of the last sync from the phone database (used when the app opens). */
 export async function loadSyncStatus(): Promise<void> {
   const state = await syncCache.state();
+  await refreshOutboxStatus();
   set({ lastSyncedAt: state?.lastSyncedAt ?? null, error: null, offline: false });
 }
 
@@ -55,6 +57,13 @@ export function syncNow(opts: { full?: boolean } = {}): Promise<void> {
     set({ syncing: true });
     try {
       if (!(await getDb())) return;
+      // Changes made on the phone go first: pulling before would overwrite what the technician just did.
+      await refreshOutboxStatus();
+      await flushOutbox();
+      if (outboxStatus.get().pending > 0) {
+        set({ error: "No connection. Changes are saved on this phone and will be sent later.", offline: true });
+        return;
+      }
       const state = await syncCache.state();
       const full = opts.full || !state || Date.now() - state.lastFullAt > FULL_COPY_EVERY_MS;
       const res = await syncApi.get(full ? undefined : state.serverTime);

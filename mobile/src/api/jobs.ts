@@ -1,7 +1,13 @@
 import type { FieldJobDetail, FieldJobList, LocationInput, TransitionInput } from "./jobTypes";
 import { jobsCache } from "../local/cache";
+import { newLocalId, write, type WriteResult } from "../local/outbox";
+import { optimistic } from "../local/optimistic";
 import { readThrough } from "../local/readThrough";
+import { FIELD_ACTION_LABEL } from "./jobTypes";
 import { http, requestBlob } from "./http";
+
+/** "WO-1024" for the label of a waiting change; empty when the job is not saved on the phone. */
+const numberOf = async (id: string) => (await jobsCache.loadDetail(id))?.number ?? "job";
 
 export type { FieldJob, FieldJobDetail, FieldJobList, LocationInput, TransitionInput } from "./jobTypes";
 export { FIELD_ACTION_LABEL } from "./jobTypes";
@@ -16,11 +22,34 @@ export const fieldJobs = {
       jobsCache.saveDetail,
       () => jobsCache.loadDetail(id),
     ),
-  /** on-my-way, start, hold (with a reason), resume, complete. */
-  transition: (id: string, input: TransitionInput) => http.post<unknown>(`/field/jobs/${id}/transition`, input),
-  addNote: (id: string, text: string) => http.post<null>(`/field/jobs/${id}/notes`, { text }),
-  setChecklist: (id: string, itemId: string, isDone: boolean) =>
-    http.put<null>(`/field/jobs/${id}/checklist/${itemId}`, { isDone }),
+  /**
+   * on-my-way, start, hold (with a reason), resume, complete. Without a signal the change is saved on the phone and
+   * sent later (see `local/outbox.ts`); the saved copy of the job already shows the new status.
+   */
+  transition: async (id: string, input: TransitionInput): Promise<WriteResult<unknown>> =>
+    write<unknown>({
+      method: "POST",
+      path: `/field/jobs/${id}/transition`,
+      body: input,
+      label: `${FIELD_ACTION_LABEL[input.action]}: ${await numberOf(id)}`,
+      optimistic: () => optimistic.transition(id, input.action),
+    }),
+  addNote: async (id: string, text: string): Promise<WriteResult<null>> =>
+    write<null>({
+      method: "POST",
+      path: `/field/jobs/${id}/notes`,
+      body: { text },
+      label: `Note on ${await numberOf(id)}`,
+      optimistic: () => optimistic.note(id, newLocalId(), text),
+    }),
+  setChecklist: async (id: string, itemId: string, isDone: boolean): Promise<WriteResult<null>> =>
+    write<null>({
+      method: "PUT",
+      path: `/field/jobs/${id}/checklist/${itemId}`,
+      body: { isDone },
+      label: `Checklist on ${await numberOf(id)}`,
+      optimistic: () => optimistic.checklist(id, itemId, isDone),
+    }),
   /** A before or after photo: `phase` is BEFORE or AFTER and `slot` is the label of the box. */
   uploadFile: (id: string, file: Blob, fileName: string, fields: { phase: "BEFORE" | "AFTER"; slot?: string }) => {
     const form = new FormData();

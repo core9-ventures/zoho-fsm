@@ -22,6 +22,8 @@ const itemsOf = (files: FieldJobDetail["evidence"]["before"]): PhotoItem[] =>
     name: f.fileName,
   }));
 
+const isQueued = (res: unknown) => !!res && typeof res === "object" && (res as { queued?: unknown }).queued === true;
+
 /** One job: where, what, the status buttons, checklist, before and after photos, and notes. */
 export function JobDetail() {
   const { id = "" } = useParams();
@@ -45,8 +47,9 @@ export function JobDetail() {
   async function change(work: () => Promise<unknown>, success?: string) {
     setBusy(true);
     try {
-      await work();
-      if (success) toast.success(success);
+      const res = await work();
+      if (isQueued(res)) toast.success("Saved on this phone. It is sent when you have a signal.");
+      else if (success) toast.success(success);
       await reload();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Something went wrong. Please try again.");
@@ -203,7 +206,8 @@ export function JobDetail() {
               if (!note.trim() || noteBusy) return;
               setNoteBusy(true);
               try {
-                await fieldJobs.addNote(j.id, note.trim());
+                const res = await fieldJobs.addNote(j.id, note.trim());
+                if (res.queued) toast.success("Note saved on this phone. It is sent when you have a signal.");
                 setNote("");
                 await reload();
               } catch (err) {

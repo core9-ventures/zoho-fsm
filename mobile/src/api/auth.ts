@@ -69,7 +69,8 @@ export const authApi = {
     } finally {
       clearTokens();
       forgetUser();
-      await wipeLocalData();
+      // Changes that were never sent stay on the phone until this user signs in again with a signal.
+      await wipeLocalData({ keepUnsent: true });
     }
   },
 

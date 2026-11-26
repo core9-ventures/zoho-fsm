@@ -1,6 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { CloudOff, Loader2, RefreshCw } from "lucide-react";
+import { discardChange, listOutbox, outboxStatus, retryFailed, type OutboxItem } from "../local/outbox";
 import { loadSyncStatus, syncNow, syncStatus } from "../local/sync";
+import { Button, Modal } from "../ui/kit";
 
 /** "just now", "5 min ago", "3 h ago", "2 days ago". */
 export function ago(then: number, now = Date.now()): string {
@@ -50,6 +52,8 @@ function useAutoSync() {
 export function SyncBar() {
   useAutoSync();
   const s = useSyncExternalStore(syncStatus.subscribe, syncStatus.get);
+  const out = useSyncExternalStore(outboxStatus.subscribe, outboxStatus.get);
+  const [reviewing, setReviewing] = useState(false);
   // Re-draw every 30 seconds so "5 min ago" stays true.
   const [, tick] = useState(0);
   useEffect(() => {
@@ -58,7 +62,26 @@ export function SyncBar() {
   }, []);
   if (!s.available) return null;
 
+  const waiting = out.pending + out.failed;
+
   return (
+    <>
+    {waiting > 0 && (
+      <button
+        type="button"
+        onClick={() => setReviewing(true)}
+        className={`flex w-full items-center gap-2 border-b px-4 py-1.5 text-left text-xs font-medium ${
+          out.failed > 0 ? "bg-red-500/10 text-red-600" : "bg-amber-500/10 text-amber-700"
+        }`}
+      >
+        {out.sending ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : <CloudOff className="size-3.5 shrink-0" />}
+        <span className="min-w-0 flex-1">
+          {out.failed > 0
+            ? `${out.failed} change${out.failed === 1 ? "" : "s"} could not be sent. Tap to review.`
+            : `${out.pending} change${out.pending === 1 ? "" : "s"} saved on this phone, waiting to be sent.`}
+        </span>
+      </button>
+    )}
     <div className="bg-muted/50 text-muted-foreground flex items-center gap-2 border-b px-4 py-1.5 text-xs">
       {s.offline ? <CloudOff className="size-3.5 shrink-0" /> : null}
       <span className="min-w-0 flex-1 truncate" role="status">
@@ -82,5 +105,56 @@ export function SyncBar() {
         {s.syncing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />} Sync
       </button>
     </div>
+    <OutboxReview open={reviewing} onClose={() => setReviewing(false)} />
+    </>
+  );
+}
+
+/** The changes that are waiting or were refused, with what the server said and a way to try again or give up. */
+function OutboxReview({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const out = useSyncExternalStore(outboxStatus.subscribe, outboxStatus.get);
+  const [items, setItems] = useState<OutboxItem[]>([]);
+  useEffect(() => {
+    if (open) void listOutbox().then(setItems);
+  }, [open, out.pending, out.failed]);
+  useEffect(() => {
+    if (open && out.pending + out.failed === 0) onClose();
+  }, [open, out.pending, out.failed, onClose]);
+
+  return (
+    <Modal
+      open={open}
+      title="Changes on this phone"
+      description="These were made without a signal or could not be sent yet."
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+          <Button onClick={() => void retryFailed().then(() => syncNow())} busy={out.sending}>
+            Send now
+          </Button>
+        </>
+      }
+    >
+      <ul className="max-h-72 space-y-2 overflow-y-auto text-sm">
+        {items.map((i) => (
+          <li key={i.seq} className="rounded-md border p-2">
+            <p className="font-medium">{i.label}</p>
+            <p className={i.status === "failed" ? "text-destructive text-xs" : "text-muted-foreground text-xs"}>
+              {i.status === "failed" ? `Not accepted: ${i.error ?? "unknown reason"}` : (i.error ?? "Waiting to be sent")}
+            </p>
+            <button
+              type="button"
+              className="text-muted-foreground mt-1 text-xs underline"
+              onClick={() => void discardChange(i.seq)}
+            >
+              {i.status === "failed" ? "Give up on this change" : "Delete this change"}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Modal>
   );
 }

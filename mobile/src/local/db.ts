@@ -93,9 +93,25 @@ export async function getDb(): Promise<Db | null> {
   return opening ? opening : null;
 }
 
-/** Closes and deletes the phone database: used when the user signs out or the session ends. */
-export async function wipeLocalData(): Promise<void> {
+/** How many changes made on the phone are still waiting to reach the server. */
+async function unsentChanges(): Promise<number> {
+  try {
+    const db = await getDb();
+    if (!db) return 0;
+    return (await db.all<{ n: number }>("SELECT COUNT(*) AS n FROM outbox"))[0]?.n ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Closes and deletes the phone database: used when the user signs out or the session ends.
+ * With `keepUnsent`, nothing is deleted while changes are still waiting to be sent: they stay on the phone (in this
+ * user's own database) and go out the next time the same user signs in with a signal.
+ */
+export async function wipeLocalData(opts: { keepUnsent?: boolean } = {}): Promise<void> {
   if (!isLocalDbAvailable()) return;
+  if (opts.keepUnsent && (await unsentChanges()) > 0) return;
   const pending = opening;
   opening = null;
   try {
