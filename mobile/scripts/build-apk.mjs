@@ -2,7 +2,7 @@
 // Studio's Java and the Android SDK, runs Gradle, and copies the result to mobile/apk/fieldserve-debug.apk.
 // Run through:  pnpm apk
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +40,26 @@ const pnpm = (args) => (hasPnpm ? ["pnpm", args] : ["corepack", ["pnpm", ...args
 // 1. The web app, then copy it into the Android project.
 run(...pnpm(["build"]), root);
 run(...pnpm(["exec", "cap", "sync", "android"]), root);
+
+// pnpm on Windows can leave empty `.gitkeep` placeholders in plugin "res" folders as hard links, which Gradle cannot
+// read ("not a regular file"). They are empty and useless, so they are removed before the build.
+const pnpmStore = path.join(root, "node_modules", ".pnpm");
+if (existsSync(pnpmStore)) {
+  for (const pkg of readdirSync(pnpmStore)) {
+    if (!/^@?capacitor/.test(pkg)) continue;
+    const modules = path.join(pnpmStore, pkg, "node_modules");
+    if (!existsSync(modules)) continue;
+    const walk = (dir, depth) => {
+      if (depth > 8) return;
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full, depth + 1);
+        else if (e.name === ".gitkeep" && full.includes(`${path.sep}android${path.sep}`)) rmSync(full, { force: true });
+      }
+    };
+    walk(modules, 0);
+  }
+}
 
 // 2. Gradle reads the SDK folder from local.properties (this file is not committed).
 writeFileSync(path.join(androidDir, "local.properties"), `sdk.dir=${sdk.replace(/\\/g, "\\\\")}\n`);

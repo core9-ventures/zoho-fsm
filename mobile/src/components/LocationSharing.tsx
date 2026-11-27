@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MapPin, MapPinOff } from "lucide-react";
 import { fieldLocation } from "../api";
+import { rememberFix } from "../lib/geo";
 import { useToast } from "../ui/toast";
 
 const EVERY_MS = 60_000;
@@ -23,6 +24,7 @@ export function LocationSharing() {
         (p) => {
           setStatus("ok");
           warned.current = false;
+          rememberFix({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy });
           void fieldLocation
             .record({
               latitude: p.coords.latitude,
