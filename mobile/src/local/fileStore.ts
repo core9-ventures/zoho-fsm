@@ -47,6 +47,16 @@ export const fileStore = {
     }
   },
 
+  /** Names of every file in the store (they are the temporary ids of the queued uploads). */
+  async names(): Promise<string[]> {
+    try {
+      const res = await Filesystem.readdir({ path: DIR, directory: Directory.Data });
+      return res.files.map((f) => f.name);
+    } catch {
+      return []; // nothing was ever stored
+    }
+  },
+
   async remove(id: string): Promise<void> {
     try {
       await Filesystem.deleteFile({ path: path(id), directory: Directory.Data });

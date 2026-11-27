@@ -2,6 +2,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { authApi } from "../api";
 import { apiBaseUrl } from "../config";
 import { useAsync } from "../data/useAsync";
+import { OfflineStatus } from "../components/OfflineStatus";
 import { useSession } from "../session";
 
 /** Who is signed in (read from the server) and the server the app is connected to. */
@@ -48,6 +49,8 @@ export function Account() {
           </dl>
         )}
       </div>
+
+      <OfflineStatus />
 
       <button
         type="button"

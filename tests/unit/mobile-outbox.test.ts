@@ -25,21 +25,30 @@ vi.mock("../../mobile/src/local/db", () => ({ getDb: async () => holder.db, isLo
 const files = new Map<string, Blob>();
 vi.mock("../../mobile/src/local/fileStore", () => ({
   fileStore: {
-    save: async (id: string, blob: Blob) => void files.set(id, blob),
+    save: async (id: string, blob: Blob) => {
+      if (failSave) throw new Error("ENOSPC");
+      files.set(id, blob);
+    },
     read: async (id: string) => files.get(id) ?? null,
     remove: async (id: string) => void files.delete(id),
+    names: async () => [...files.keys()],
   },
 }));
+let failSave = false;
 
-type Call = { method: string; path: string; body?: unknown; idempotencyKey?: string; form?: FormData };
+type Call = { method: string; path: string; body?: unknown; idempotencyKey?: string; form?: FormData; timeoutMs?: number };
 const calls: Call[] = [];
 let respond: (c: Call) => unknown = () => null;
 vi.mock("../../mobile/src/api/http", async (orig) => {
   const real = await orig<typeof import("../../mobile/src/api/http")>();
   return {
     ...real,
-    request: async (method: string, path: string, opts: { body?: unknown; idempotencyKey?: string; form?: FormData } = {}) => {
-      const c = { method, path, body: opts.body, idempotencyKey: opts.idempotencyKey, form: opts.form };
+    request: async (
+      method: string,
+      path: string,
+      opts: { body?: unknown; idempotencyKey?: string; form?: FormData; timeoutMs?: number } = {},
+    ) => {
+      const c = { method, path, body: opts.body, idempotencyKey: opts.idempotencyKey, form: opts.form, timeoutMs: opts.timeoutMs };
       calls.push(c);
       return respond(c);
     },
@@ -58,6 +67,8 @@ import {
   listOutbox,
   newLocalId,
   outboxStatus,
+  sweepOrphanFiles,
+  DIRECT_TIMEOUT_MS,
   refreshOutboxStatus,
   resolveId,
   retryFailed,
@@ -112,6 +123,7 @@ describe.skipIf(!sqliteModule)("Offline Phase 3 — outbox on the phone", () => 
     await migrate(holder.db);
     calls.length = 0;
     files.clear();
+    failSave = false;
     respond = () => null;
     setOnline(true);
     await refreshOutboxStatus();
@@ -625,5 +637,203 @@ describe("Offline Phase 5 — explaining a refusal", () => {
     const { explain } = await import("../../mobile/src/local/rejections");
     expect(explain("SOMETHING_NEW", "Please call the office.")).toMatchObject({ title: "Please call the office.", canRetry: true });
     expect(explain(null, null).title).toMatch(/did not accept/);
+  });
+});
+
+describe.skipIf(!sqliteModule)("Offline Phase 6 — field conditions", () => {
+  beforeEach(async () => {
+    holder.db = memoryDb();
+    await migrate(holder.db);
+    calls.length = 0;
+    files.clear();
+    failSave = false;
+    respond = () => null;
+    setOnline(true);
+    await refreshOutboxStatus();
+  });
+
+  it("a change made with a signal waits only a few seconds for the server, an upload waits long", async () => {
+    await write({ method: "POST", path: "/field/jobs/wo1/notes", body: { text: "x" }, label: "Note" });
+    expect(calls[0].timeoutMs).toBe(DIRECT_TIMEOUT_MS);
+    expect(DIRECT_TIMEOUT_MS).toBeLessThanOrEqual(15_000);
+    await write({
+      method: "POST",
+      path: "/field/jobs/wo1/attachments",
+      label: "Photo",
+      localId: newLocalId(),
+      file: { blob: new Blob(["x"], { type: "image/jpeg" }), name: "a.jpg", fields: {} },
+    });
+    expect(calls[1].timeoutMs).toBeUndefined();
+  });
+
+  it("a weak signal (timeout) queues the change instead of losing it, and it is sent once the signal is good", async () => {
+    let attempts = 0;
+    respond = () => {
+      if (++attempts <= 2) throw new ApiError("The server took too long to answer.", 0);
+      return null;
+    };
+    const res = await write({ method: "PUT", path: "/field/jobs/wo1/checklist/c1", body: { isDone: true }, label: "Checklist" });
+    expect(res.queued).toBe(true);
+    expect((await listOutbox()).length).toBe(1);
+    await flushOutbox();
+    expect(await listOutbox()).toHaveLength(0);
+    expect(new Set(calls.map((c) => c.idempotencyKey)).size).toBe(1); // one key for every attempt
+  });
+
+  it("a photo that cannot be stored (phone out of space) queues nothing and says why", async () => {
+    failSave = true;
+    setOnline(false);
+    await expect(
+      write({
+        method: "POST",
+        path: "/field/jobs/wo1/attachments",
+        label: "Photo",
+        localId: newLocalId(),
+        file: { blob: new Blob(["x"], { type: "image/jpeg" }), name: "a.jpg", fields: {} },
+      }),
+    ).rejects.toThrow(/almost out of storage/);
+    expect(await listOutbox()).toHaveLength(0);
+  });
+
+  it("removes stored files no queued change needs, and keeps the ones it does", async () => {
+    setOnline(false);
+    const keep = newLocalId();
+    await write({
+      method: "POST",
+      path: "/field/jobs/wo1/attachments",
+      label: "Photo",
+      localId: keep,
+      file: { blob: new Blob(["x"], { type: "image/jpeg" }), name: "a.jpg", fields: {} },
+    });
+    files.set("local-orphan-left-by-a-crash", new Blob(["y"]));
+    expect(await sweepOrphanFiles()).toBe(1);
+    expect([...files.keys()]).toEqual([keep]);
+  });
+
+  it("a full day offline ends with an empty queue and everything sent once, in order", async () => {
+    setOnline(false);
+    const order: string[] = [];
+    // A technician's day: start a job, tick the checklist, a note, two photos, complete it, a held installation, GPS.
+    await write({ method: "POST", path: "/field/jobs/wo1/transition", body: { action: "start" }, label: "Start" });
+    await write({ method: "PUT", path: "/field/jobs/wo1/checklist/c1", body: { isDone: true }, label: "Tick" });
+    await write({ method: "POST", path: "/field/jobs/wo1/notes", body: { text: "n" }, label: "Note" });
+    for (const slot of ["FRONT", "CABIN_1"]) {
+      await write({
+        method: "POST",
+        path: "/field/jobs/wo1/attachments",
+        label: `Photo ${slot}`,
+        localId: newLocalId(),
+        file: { blob: new Blob([slot], { type: "image/jpeg" }), name: `${slot}.jpg`, fields: { phase: "AFTER", slot } },
+      });
+    }
+    await write({ method: "POST", path: "/field/jobs/wo1/transition", body: { action: "complete" }, label: "Complete" });
+    const inst = newLocalId();
+    await write({ method: "POST", path: "/field/installations/hold", body: {}, label: "Held", localId: inst });
+    await recordReading({ latitude: 24.1, longitude: 67.1 });
+    await recordReading({ latitude: 24.2, longitude: 67.2 });
+    expect(outboxStatus.get().pending).toBe(7);
+    expect(calls).toHaveLength(0);
+
+    setOnline(true);
+    respond = (c) => {
+      order.push(c.path);
+      return c.path === "/field/installations/hold" ? { id: "inst-1" } : { id: "x" };
+    };
+    const r = await flushOutbox();
+    expect(r).toEqual({ sent: 7, stopped: false });
+    expect(order).toEqual([
+      "/field/jobs/wo1/transition",
+      "/field/jobs/wo1/checklist/c1",
+      "/field/jobs/wo1/notes",
+      "/field/jobs/wo1/attachments",
+      "/field/jobs/wo1/attachments",
+      "/field/jobs/wo1/transition",
+      "/field/installations/hold",
+      "/field/location/batch",
+    ]);
+    expect(await listOutbox()).toHaveLength(0);
+    expect(files.size).toBe(0);
+    expect(await gpsBacklog()).toBe(0);
+    expect(outboxStatus.get()).toMatchObject({ pending: 0, failed: 0 });
+  });
+
+  it("signal lost in the middle of the queue: what was sent stays sent, the rest waits and finishes later with no duplicates", async () => {
+    setOnline(false);
+    for (const p of ["/1", "/2", "/3", "/4"]) await write({ method: "POST", path: p, label: p });
+    setOnline(true);
+    let seen = 0;
+    respond = () => {
+      if (++seen === 3) throw new ApiError("Could not reach the server.", 0);
+      return null;
+    };
+    const first = await flushOutbox();
+    expect(first).toEqual({ sent: 2, stopped: true });
+    const keysBefore = calls.map((c) => c.idempotencyKey);
+    respond = () => null;
+    const second = await flushOutbox();
+    expect(second).toEqual({ sent: 2, stopped: false });
+    // "/3" was tried twice with the same key, so the server applies it once.
+    const k3 = calls.filter((c) => c.path === "/3").map((c) => c.idempotencyKey);
+    expect(k3).toHaveLength(2);
+    expect(k3[0]).toBe(k3[1]);
+    expect(keysBefore.length).toBe(3);
+    expect(await listOutbox()).toHaveLength(0);
+  });
+});
+
+describe("Offline Phase 6 — reading with a weak signal", () => {
+  it("shows the saved copy after a few seconds when the server is slow, instead of waiting for the timeout", async () => {
+    const { readThrough } = await import("../../mobile/src/local/readThrough");
+    let saved = 0;
+    const slowServer = () => new Promise<string>((resolve) => setTimeout(() => resolve("fresh"), 200));
+    const t0 = Date.now();
+    const value = await readThrough(slowServer, async () => void saved++, async () => "saved copy", 20);
+    expect(value).toBe("saved copy");
+    expect(Date.now() - t0).toBeLessThan(150);
+    // The server did answer in the end: its answer is saved for next time.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(saved).toBe(1);
+  });
+
+  it("with no saved copy it keeps waiting for the server", async () => {
+    const { readThrough } = await import("../../mobile/src/local/readThrough");
+    const slowServer = () => new Promise<string>((resolve) => setTimeout(() => resolve("fresh"), 60));
+    expect(await readThrough(slowServer, async () => undefined, async () => null, 10)).toBe("fresh");
+  });
+
+  it("an answer from the server is never replaced by old data, even a slow refusal", async () => {
+    const { readThrough } = await import("../../mobile/src/local/readThrough");
+    const refusal = () =>
+      new Promise<string>((_, reject) => setTimeout(() => reject(new ApiError("Not found", 404)), 40));
+    await expect(readThrough(refusal, async () => undefined, async () => "saved", 200)).rejects.toThrow("Not found");
+  });
+
+  it("a network error shows the saved copy at once", async () => {
+    const { readThrough } = await import("../../mobile/src/local/readThrough");
+    const down = async () => {
+      throw new ApiError("Could not reach the server.", 0);
+    };
+    expect(await readThrough(down, async () => undefined, async () => "saved", 5_000)).toBe("saved");
+  });
+});
+
+describe("Offline Phase 6 — knowing when the server is reachable", () => {
+  it("goes offline on a failed call, and back online (running the sync callbacks) on the next answer", async () => {
+    const { connection, reportOutcome } = await import("../../mobile/src/local/connection");
+    let back = 0;
+    const stop = connection.onBack(() => back++);
+    let changes = 0;
+    const unsub = connection.subscribe(() => changes++);
+    reportOutcome(true);
+    expect(connection.get()).toBe(true);
+    reportOutcome(false);
+    expect(connection.get()).toBe(false);
+    reportOutcome(false); // still offline: nothing new
+    reportOutcome(true);
+    expect(connection.get()).toBe(true);
+    expect(back).toBe(1);
+    expect(changes).toBe(2);
+    stop();
+    unsub();
   });
 });

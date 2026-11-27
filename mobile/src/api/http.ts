@@ -1,4 +1,5 @@
 import { apiBaseUrl, REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from "../config";
+import { reportOutcome } from "../local/connection";
 import { wipeLocalData } from "../local/db";
 import { clearTokens, readTokens, saveTokens, type Tokens } from "./tokens";
 
@@ -79,13 +80,16 @@ async function send(method: string, path: string, opts: Options, accessToken: st
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
   try {
-    return await fetch(urlFor(path, opts.query), {
+    const res = await fetch(urlFor(path, opts.query), {
       method,
       headers,
       body: opts.form ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
       signal: controller.signal,
     });
+    reportOutcome(true);
+    return res;
   } catch (e) {
+    reportOutcome(false);
     const timedOut = e instanceof DOMException && e.name === "AbortError";
     throw new ApiError(
       timedOut

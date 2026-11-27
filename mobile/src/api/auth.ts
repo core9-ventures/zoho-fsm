@@ -38,8 +38,9 @@ export const authApi = {
   },
 
   /** The signed-in user (used to restore a session when the app opens). */
-  async me(): Promise<SessionUser> {
-    const user = await http.get<SessionUser>("/auth/me");
+  async me(opts: { quick?: boolean } = {}): Promise<SessionUser> {
+    // `quick`: a technician with saved data should not wait half a minute on a weak signal to open the app.
+    const user = await request<SessionUser>("GET", "/auth/me", opts.quick ? { timeoutMs: 6_000 } : {});
     rememberUser(user);
     return user;
   },

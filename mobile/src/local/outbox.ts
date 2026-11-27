@@ -162,6 +162,9 @@ const offline = () => typeof navigator !== "undefined" && navigator.onLine === f
 let sending = false;
 let running: Promise<FlushResult> | null = null;
 
+/** How long a change made with a signal waits for the server before it is queued instead. */
+export const DIRECT_TIMEOUT_MS = 10_000;
+
 /**
  * Makes one change. With a phone database (technicians in the app) the change is queued whenever it cannot be sent
  * right now: there is no signal, or earlier changes are still waiting (order must be kept). Otherwise it is sent
@@ -170,10 +173,12 @@ let running: Promise<FlushResult> | null = null;
 export async function write<T>(change: Change): Promise<WriteResult<T>> {
   const db = isLocalDbAvailable() ? await getDb() : null;
   const key = newKey();
+  // A change without a file waits only a few seconds for the server: on a weak signal it is queued and sent later
+  // (same key, so it is still applied once). Uploads get the long wait.
   const opts = change.file
     ? { form: formOf(change.file), idempotencyKey: key }
-    : { body: change.body, idempotencyKey: key };
-  if (!db) return { queued: false, data: await request<T>(change.method, change.path, opts) };
+    : { body: change.body, idempotencyKey: key, timeoutMs: DIRECT_TIMEOUT_MS };
+  if (!db) return { queued: false, data: await request<T>(change.method, change.path, { ...opts, timeoutMs: undefined }) };
 
   if (status.pending === 0 && !sending && !offline()) {
     try {
@@ -186,7 +191,11 @@ export async function write<T>(change: Change): Promise<WriteResult<T>> {
   if (change.file) {
     if (!change.localId) throw new Error("A file change needs a temporary id.");
     // The file goes to the phone's storage first: if that fails, nothing is queued and the screen shows the error.
-    await fileStore.save(change.localId, change.file.blob);
+    try {
+      await fileStore.save(change.localId, change.file.blob);
+    } catch {
+      throw new Error("The photo could not be saved on the phone. It may be almost out of storage: free some space and try again.");
+    }
   }
   await db.batch([
     {
@@ -354,6 +363,27 @@ export async function discardChange(seq: number): Promise<void> {
   if (row?.file_name && row.local_id) await fileStore.remove(row.local_id);
   await db?.batch([{ sql: "DELETE FROM outbox WHERE seq = ?", params: [seq] }]);
   await refreshOutboxStatus();
+}
+
+/**
+ * Deletes stored photo and video files that no queued change refers to any more (left behind by a crash or an
+ * interrupted delete), so they never fill the phone. Files of queued uploads are never touched.
+ */
+export async function sweepOrphanFiles(): Promise<number> {
+  const db = await getDb();
+  if (!db || sending) return 0;
+  const wanted = new Set(
+    (await db.all<{ local_id: string }>("SELECT local_id FROM outbox WHERE file_name IS NOT NULL AND local_id IS NOT NULL")).map(
+      (r) => r.local_id,
+    ),
+  );
+  let removed = 0;
+  for (const name of await fileStore.names()) {
+    if (wanted.has(name)) continue;
+    await fileStore.remove(name);
+    removed++;
+  }
+  return removed;
 }
 
 /**

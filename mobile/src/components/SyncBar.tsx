@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CloudOff, Loader2, RefreshCw } from "lucide-react";
+import { connection } from "../local/connection";
 import { discardChange, listOutbox, outboxStatus, retryFailed, type OutboxItem } from "../local/outbox";
 import { loadSyncStatus, syncNow, syncStatus } from "../local/sync";
 import { explain } from "../local/rejections";
@@ -35,6 +36,8 @@ function useAutoSync() {
       if (document.visibilityState === "visible") void syncNow();
     }, FOREGROUND_SYNC_MS);
     const onOnline = () => void syncNow();
+    // The server answered again after being unreachable: send the queue and sync without waiting for the timer.
+    const stopWatching = connection.onBack(() => void syncNow());
     const onVisible = () => {
       const last = syncStatus.get().lastSyncedAt;
       if (document.visibilityState === "visible" && (!last || Date.now() - last > STALE_MS)) void syncNow();
@@ -43,6 +46,7 @@ function useAutoSync() {
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       alive = false;
+      stopWatching();
       clearInterval(interval);
       window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onVisible);
@@ -55,6 +59,7 @@ export function SyncBar() {
   useAutoSync();
   const s = useSyncExternalStore(syncStatus.subscribe, syncStatus.get);
   const out = useSyncExternalStore(outboxStatus.subscribe, outboxStatus.get);
+  const reachable = useSyncExternalStore(connection.subscribe, connection.get);
   const [reviewing, setReviewing] = useState(false);
   const toast = useToast();
   // When the server refuses a change, say so once and refresh from the server: the office has changed that job.
@@ -80,6 +85,12 @@ export function SyncBar() {
 
   return (
     <>
+    {!reachable && (
+      <div role="status" className="flex items-center gap-2 bg-slate-800 px-4 py-2 text-xs font-medium text-white">
+        <CloudOff className="size-4 shrink-0" />
+        <span>You are offline. Everything you do is saved on this phone and sent when the signal returns.</span>
+      </div>
+    )}
     {waiting > 0 && (
       <button
         type="button"

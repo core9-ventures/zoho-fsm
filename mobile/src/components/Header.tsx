@@ -20,8 +20,7 @@ export function Header({ leading, trailing }: { leading?: ReactNode; trailing?: 
       <button
         type="button"
         onClick={() => {
-          clearImageCache();
-          void signOut();
+          void signOut().then(clearImageCache);
         }}
         className="hover:bg-accent flex items-center gap-1 rounded-md px-2 py-1.5 text-sm font-medium"
       >

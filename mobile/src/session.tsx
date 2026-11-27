@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ApiError, authApi, onSessionLost, type SessionUser } from "./api";
+import { outboxStatus } from "./local/outbox";
 
 /** Which set of screens the signed-in user gets. */
 export type Role = "TECHNICIAN" | "OFFICE";
@@ -32,8 +33,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!authApi.hasTokens()) return;
     let cancelled = false;
+    // A technician who signed in before opens the app after a few seconds even with a very weak signal.
+    const saved = authApi.cachedUser();
     authApi
-      .me()
+      .me({ quick: saved?.role === "TECHNICIAN" })
       .then(async (me) => {
         if (cancelled) return;
         if (roleOf(me)) {
@@ -45,7 +48,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // No signal: a technician who signed in before keeps working from the saved data. A lost session is
         // handled by onSessionLost, and any other error leaves the sign-in screen up.
         if (!(e instanceof ApiError && e.isNetwork)) return;
-        const saved = authApi.cachedUser();
         if (!saved || saved.role !== "TECHNICIAN" || !authApi.hasTokens()) return;
         await authApi.openLocalData(saved);
         if (!cancelled) setUser(saved);
@@ -71,6 +73,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    // Changes that were never sent are kept on the phone for the next sign-in: say so before leaving.
+    const waiting = outboxStatus.get().pending + outboxStatus.get().failed;
+    if (
+      waiting > 0 &&
+      !window.confirm(
+        `${waiting} change${waiting === 1 ? " has" : "s have"} not reached the server yet. They stay on this phone and are sent when you sign in again with a signal. Sign out anyway?`,
+      )
+    )
+      return;
     await authApi.logout();
     setUser(null);
   }, []);

@@ -2,7 +2,8 @@ import { ApiError } from "../api/http";
 import { syncApi } from "../api/sync";
 import { syncCache } from "./cache";
 import { getDb, isLocalDbAvailable } from "./db";
-import { flushOutbox, outboxStatus, refreshOutboxStatus } from "./outbox";
+import { gpsBacklog } from "./gps";
+import { flushOutbox, outboxStatus, refreshOutboxStatus, sweepOrphanFiles } from "./outbox";
 
 /**
  * Keeps the phone database up to date with the server: jobs of the next 7 days plus the ones in progress, the
@@ -45,6 +46,9 @@ export const syncStatus = {
 export async function loadSyncStatus(): Promise<void> {
   const state = await syncCache.state();
   await refreshOutboxStatus();
+  await gpsBacklog();
+  // Housekeeping once per app start: files nobody waits for any more.
+  void sweepOrphanFiles().catch(() => undefined);
   set({ lastSyncedAt: state?.lastSyncedAt ?? null, error: null, offline: false });
 }
 
