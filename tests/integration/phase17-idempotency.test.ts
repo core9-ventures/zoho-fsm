@@ -140,8 +140,9 @@ describe("Offline Phase 3 — Idempotency-Key", () => {
       }),
       { params: Promise.resolve({ id: workOrderId }) },
     );
-    // tech2 is not assigned to this job (404/403), but the key itself did not collide (not 422/409-busy).
-    expect([403, 404]).toContain(res.status);
+    // tech2 is not assigned to this job (refused as JOB_REASSIGNED), but the key itself did not collide.
+    const body = (await res.json()) as { code?: string };
+    expect(body.code).toBe("JOB_REASSIGNED");
     await owner.idempotencyKey.deleteMany({ where: { key: `t-${stamp}-note` } });
   });
 });

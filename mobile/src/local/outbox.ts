@@ -21,6 +21,10 @@ export type OutboxItem = {
   label: string;
   status: "pending" | "failed";
   error: string | null;
+  /** The server's reason code when it refused the change (JOB_CANCELLED, ...). */
+  errorCode: string | null;
+  /** What the change holds that the technician may want to keep: the text of a note, or the name of a photo. */
+  detail: { kind: "note" | "file"; text: string } | null;
   attempts: number;
   createdAt: number;
 };
@@ -37,6 +41,7 @@ type Row = {
   error: string | null;
   attempts: number;
   created_at: number;
+  error_code: string | null;
   file_name: string | null;
   file_type: string | null;
   file_fields: string | null;
@@ -91,9 +96,24 @@ export async function listOutbox(): Promise<OutboxItem[]> {
     label: r.label,
     status: r.status,
     error: r.error,
+    errorCode: r.error_code,
+    detail: detailOf(r),
     attempts: r.attempts,
     createdAt: r.created_at,
   }));
+}
+
+function detailOf(r: Row): OutboxItem["detail"] {
+  if (r.file_name) return { kind: "file", text: r.file_name };
+  if (r.path.endsWith("/notes") && r.body) {
+    try {
+      const text = (JSON.parse(r.body) as { text?: unknown }).text;
+      if (typeof text === "string") return { kind: "note", text };
+    } catch {
+      /* not a note */
+    }
+  }
+  return null;
 }
 
 /** The real id of a record that was created on the phone (or the same id when it is not a temporary one). */
@@ -240,7 +260,7 @@ export function flushOutbox(): Promise<FlushResult> {
         if (!ready) {
           await db.batch([
             {
-              sql: "UPDATE outbox SET status = 'failed', error = ? WHERE seq = ?",
+              sql: "UPDATE outbox SET status = 'failed', error = ?, error_code = 'DEPENDS_ON_FAILED' WHERE seq = ?",
               params: ["It depends on an earlier change that was not saved.", row.seq],
             },
           ]);
@@ -252,7 +272,7 @@ export function flushOutbox(): Promise<FlushResult> {
           if (!blob) {
             await db.batch([
               {
-                sql: "UPDATE outbox SET status = 'failed', error = ? WHERE seq = ?",
+                sql: "UPDATE outbox SET status = 'failed', error = ?, error_code = 'FILE_MISSING' WHERE seq = ?",
                 params: ["The photo or video is no longer on the phone.", row.seq],
               },
             ]);
@@ -293,8 +313,8 @@ export function flushOutbox(): Promise<FlushResult> {
           }
           await db.batch([
             {
-              sql: "UPDATE outbox SET status = 'failed', error = ?, attempts = attempts + 1 WHERE seq = ?",
-              params: [message, row.seq],
+              sql: "UPDATE outbox SET status = 'failed', error = ?, error_code = ?, attempts = attempts + 1 WHERE seq = ?",
+              params: [message, e instanceof ApiError ? e.code : null, row.seq],
             },
           ]);
         }
@@ -315,10 +335,14 @@ export function flushOutbox(): Promise<FlushResult> {
   return running;
 }
 
-/** Puts every refused change back in the queue to be sent again (the technician pressed "Try again"). */
-export async function retryFailed(): Promise<void> {
+/** Puts every refused change back in the queue to be sent again, or just one of them (`seq`). */
+export async function retryFailed(seq?: number): Promise<void> {
   const db = await getDb();
-  await db?.batch([{ sql: "UPDATE outbox SET status = 'pending', error = NULL WHERE status = 'failed'" }]);
+  await db?.batch([
+    seq === undefined
+      ? { sql: "UPDATE outbox SET status = 'pending', error = NULL, error_code = NULL WHERE status = 'failed'" }
+      : { sql: "UPDATE outbox SET status = 'pending', error = NULL, error_code = NULL WHERE seq = ? AND status = 'failed'", params: [seq] },
+  ]);
   await refreshOutboxStatus();
   await flushOutbox();
 }

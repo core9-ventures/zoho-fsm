@@ -75,6 +75,29 @@ export const fillLocationSchema = z.object({
 });
 export type FillLocation = z.infer<typeof fillLocationSchema>;
 
+/**
+ * The values of the form as the phone last knew them (what the technician started from). When it is sent with a
+ * change, the server keeps any field the technician did not touch as the office has it now, instead of writing the
+ * technician's old copy over the office's fix. See `mergeWithServer`.
+ */
+export const installationBaseSchema = z
+  .object({
+    customerId: z.string(),
+    vehicleNo: z.string(),
+    deviceId: z.string(),
+    simNo: z.string(),
+    installDate: z.string(),
+    location: z.string(),
+    latitude: z.string(),
+    longitude: z.string(),
+    deviceType: z.string(),
+    hasTempSensor: z.boolean(),
+    checklist: z.array(z.string()),
+    notes: z.string(),
+  })
+  .partial();
+export type InstallationBase = z.infer<typeof installationBaseSchema>;
+
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-11-04.")
@@ -97,6 +120,8 @@ export const createInstallationSchema = z
     notes: optionalText(2000),
     /** Where the technician was when saving; required for a technician (checked in the service). */
     fill: fillLocationSchema.nullish(),
+    /** What the phone started from, so changes made by the office in the meantime are kept (technician app only). */
+    base: installationBaseSchema.nullish(),
   })
   .refine((v) => (v.latitude === "") === (v.longitude === ""), {
     message: "Give both latitude and longitude, or neither.",
@@ -125,6 +150,7 @@ export const holdInstallationSchema = z
     /** Why the record is put on hold; required. */
     holdReason: z.string().trim().min(1, "Tell us why you are putting it on hold.").max(300),
     fill: fillLocationSchema.nullish(),
+    base: installationBaseSchema.nullish(),
   })
   .refine((v) => (v.latitude === "") === (v.longitude === ""), {
     message: "Give both latitude and longitude, or neither.",

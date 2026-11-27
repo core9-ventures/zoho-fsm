@@ -543,4 +543,87 @@ describe.skipIf(!sqliteModule)("Offline Phase 3 — outbox on the phone", () => 
     await flushOutbox();
     expect(calls.map((c) => c.path)).toEqual(["/a", "/field/location/batch"]);
   });
+
+  // ---- Offline Phase 5: refused changes ----
+
+  it("keeps the server's reason code and what the change holds, and never deletes a refused note or photo", async () => {
+    setOnline(false);
+    const photoId = newLocalId();
+    await write({ method: "POST", path: "/field/jobs/wo1/notes", body: { text: "Arrived, gate locked" }, label: "Note on WO-1" });
+    await write({
+      method: "POST",
+      path: "/field/jobs/wo1/attachments",
+      label: "Photo for WO-1",
+      localId: photoId,
+      file: { blob: new Blob(["x"], { type: "image/jpeg" }), name: "gate.jpg", fields: { phase: "BEFORE" } },
+    });
+    setOnline(true);
+    respond = () => {
+      throw new ApiError("WO-1 was cancelled by the office.", 409, {}, "JOB_CANCELLED");
+    };
+    await flushOutbox();
+    const items = await listOutbox();
+    expect(items.map((i) => [i.status, i.errorCode])).toEqual([
+      ["failed", "JOB_CANCELLED"],
+      ["failed", "JOB_CANCELLED"],
+    ]);
+    expect(items[0].detail).toEqual({ kind: "note", text: "Arrived, gate locked" });
+    expect(items[1].detail).toEqual({ kind: "file", text: "gate.jpg" });
+    expect(files.has(photoId)).toBe(true); // the photo stays on the phone until the technician deletes the change
+    expect(outboxStatus.get()).toMatchObject({ pending: 0, failed: 2 });
+  });
+
+  it("retries one refused change and leaves the others", async () => {
+    setOnline(false);
+    await write({ method: "POST", path: "/a", label: "A" });
+    await write({ method: "POST", path: "/b", label: "B" });
+    setOnline(true);
+    respond = () => {
+      throw new ApiError("no", 409, {}, "JOB_STATUS_CHANGED");
+    };
+    await flushOutbox();
+    const [a] = await listOutbox();
+    calls.length = 0;
+    respond = () => null;
+    await retryFailed(a.seq);
+    expect(calls.map((c) => c.path)).toEqual(["/a"]);
+    const left = await listOutbox();
+    expect(left.map((i) => [i.label, i.status])).toEqual([["B", "failed"]]);
+  });
+
+  it("a refused change does not hide or lose the changes behind it", async () => {
+    setOnline(false);
+    await write({ method: "POST", path: "/field/jobs/wo1/transition", body: { action: "start" }, label: "Start" });
+    await write({ method: "POST", path: "/field/jobs/wo2/notes", body: { text: "other job" }, label: "Note on WO-2" });
+    setOnline(true);
+    respond = (c) => {
+      if (c.path.includes("wo1")) throw new ApiError("cancelled", 409, {}, "JOB_CANCELLED");
+      return null;
+    };
+    const r = await flushOutbox();
+    expect(r.sent).toBe(1);
+    expect((await listOutbox()).map((i) => i.label)).toEqual(["Start"]);
+  });
+});
+
+describe("Offline Phase 5 — explaining a refusal", () => {
+  it("every reason the server can give has a plain explanation", async () => {
+    const { explain } = await import("../../mobile/src/local/rejections");
+    for (const code of [
+      "JOB_CANCELLED", "JOB_REASSIGNED", "JOB_DELETED", "JOB_UNSCHEDULED", "JOB_ALREADY_COMPLETED", "JOB_STATUS_CHANGED",
+      "INSTALLATION_NOT_FOUND", "INSTALLATION_ALREADY_COMPLETED", "DEPENDS_ON_FAILED", "FILE_MISSING", "VALIDATION_ERROR",
+    ]) {
+      const e = explain(code, "server sentence");
+      expect(e.title.length).toBeGreaterThan(10);
+      expect(e.title).not.toBe("server sentence");
+    }
+    expect(explain("JOB_CANCELLED", null).canRetry).toBe(false);
+    expect(explain("JOB_REASSIGNED", null).title).toMatch(/another technician/);
+  });
+
+  it("an unknown reason shows the server's own sentence and allows a retry", async () => {
+    const { explain } = await import("../../mobile/src/local/rejections");
+    expect(explain("SOMETHING_NEW", "Please call the office.")).toMatchObject({ title: "Please call the office.", canRetry: true });
+    expect(explain(null, null).title).toMatch(/did not accept/);
+  });
 });

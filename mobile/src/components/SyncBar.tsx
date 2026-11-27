@@ -1,8 +1,10 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CloudOff, Loader2, RefreshCw } from "lucide-react";
 import { discardChange, listOutbox, outboxStatus, retryFailed, type OutboxItem } from "../local/outbox";
 import { loadSyncStatus, syncNow, syncStatus } from "../local/sync";
+import { explain } from "../local/rejections";
 import { Button, Modal } from "../ui/kit";
+import { useToast } from "../ui/toast";
 
 /** "just now", "5 min ago", "3 h ago", "2 days ago". */
 export function ago(then: number, now = Date.now()): string {
@@ -54,6 +56,18 @@ export function SyncBar() {
   const s = useSyncExternalStore(syncStatus.subscribe, syncStatus.get);
   const out = useSyncExternalStore(outboxStatus.subscribe, outboxStatus.get);
   const [reviewing, setReviewing] = useState(false);
+  const toast = useToast();
+  // When the server refuses a change, say so once and refresh from the server: the office has changed that job.
+  const seenFailed = useRef(0);
+  useEffect(() => {
+    if (out.failed > seenFailed.current) {
+      toast.error(
+        `${out.failed - seenFailed.current} change${out.failed - seenFailed.current === 1 ? " was" : "s were"} not accepted by the server. Tap the red bar to see why.`,
+      );
+      void syncNow();
+    }
+    seenFailed.current = out.failed;
+  }, [out.failed, toast]);
   // Re-draw every 30 seconds so "5 min ago" stays true.
   const [, tick] = useState(0);
   useEffect(() => {
@@ -112,6 +126,7 @@ export function SyncBar() {
 
 /** The changes that are waiting or were refused, with what the server said and a way to try again or give up. */
 function OutboxReview({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const toast = useToast();
   const out = useSyncExternalStore(outboxStatus.subscribe, outboxStatus.get);
   const [items, setItems] = useState<OutboxItem[]>([]);
   useEffect(() => {
@@ -138,22 +153,53 @@ function OutboxReview({ open, onClose }: { open: boolean; onClose: () => void })
         </>
       }
     >
-      <ul className="max-h-72 space-y-2 overflow-y-auto text-sm">
-        {items.map((i) => (
-          <li key={i.seq} className="rounded-md border p-2">
-            <p className="font-medium">{i.label}</p>
-            <p className={i.status === "failed" ? "text-destructive text-xs" : "text-muted-foreground text-xs"}>
-              {i.status === "failed" ? `Not accepted: ${i.error ?? "unknown reason"}` : (i.error ?? "Waiting to be sent")}
-            </p>
-            <button
-              type="button"
-              className="text-muted-foreground mt-1 text-xs underline"
-              onClick={() => void discardChange(i.seq)}
-            >
-              {i.status === "failed" ? "Give up on this change" : "Delete this change"}
-            </button>
-          </li>
-        ))}
+      <ul className="max-h-80 space-y-2 overflow-y-auto text-sm">
+        {items.map((i) => {
+          const why = i.status === "failed" ? explain(i.errorCode, i.error) : null;
+          return (
+            <li key={i.seq} className={`rounded-md border p-2 ${why ? "border-red-500/40" : ""}`}>
+              <p className="font-medium">{i.label}</p>
+              {why ? (
+                <>
+                  <p className="text-destructive text-xs font-medium">{why.title}</p>
+                  <p className="text-muted-foreground text-xs">{why.advice}</p>
+                </>
+              ) : (
+                <p className="text-muted-foreground text-xs">{i.error ?? "Waiting to be sent"}</p>
+              )}
+              {i.detail && (
+                <p className="bg-muted mt-1 rounded p-1.5 text-xs break-words whitespace-pre-wrap">
+                  {i.detail.kind === "note" ? `Your note: ${i.detail.text}` : `File kept on the phone: ${i.detail.text}`}
+                </p>
+              )}
+              <div className="mt-1.5 flex flex-wrap gap-3 text-xs">
+                {why?.canRetry && (
+                  <button type="button" className="font-medium underline" onClick={() => void retryFailed(i.seq)}>
+                    Try again
+                  </button>
+                )}
+                {i.detail?.kind === "note" && (
+                  <button
+                    type="button"
+                    className="font-medium underline"
+                    onClick={() => void navigator.clipboard?.writeText(i.detail!.text).then(() => toast.success("Note copied."))}
+                  >
+                    Copy my note
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="text-muted-foreground underline"
+                  onClick={() => {
+                    if (!i.detail || window.confirm("This deletes the change and what it holds from the phone. Continue?")) void discardChange(i.seq);
+                  }}
+                >
+                  {i.status === "failed" ? "Delete this change" : "Delete before sending"}
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </Modal>
   );

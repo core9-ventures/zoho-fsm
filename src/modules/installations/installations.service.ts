@@ -16,7 +16,7 @@ import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "@
 import { paged, toSkipTake, type PagedResult } from "@/lib/pagination";
 import { baseType, deleteStoredFile, nameForType, safeFileName, saveFile } from "@/lib/storage";
 import { nullIfEmpty } from "@/lib/validation";
-import { isInstallationSlot } from "./installations.schema";
+import { isInstallationSlot, type InstallationBase } from "./installations.schema";
 import { mediaKindOf } from "@/modules/work-orders";
 import type { MediaDto } from "@/modules/work-orders/work-orders.schema";
 
@@ -57,8 +57,70 @@ async function mineOrThrow(db: AppDb, actor: CurrentUser, id: string) {
   const row = await db.installation.findFirst({ where: { id }, select: { id: true, createdById: true, status: true } });
   // A technician sees only the installations they recorded.
   if (!row || (actor.role === "TECHNICIAN" && row.createdById !== actor.id))
-    throw new NotFoundError("Installation", id);
+    throw new NotFoundError("Installation", id, "INSTALLATION_NOT_FOUND");
   return row;
+}
+
+/** The fields of the form that a change from the phone may carry (what `base` describes). */
+const MERGE_FIELDS = [
+  "customerId",
+  "vehicleNo",
+  "deviceId",
+  "simNo",
+  "installDate",
+  "location",
+  "latitude",
+  "longitude",
+  "deviceType",
+  "hasTempSensor",
+  "checklist",
+  "notes",
+] as const;
+
+type FormValues = Required<InstallationBase>;
+
+const same = (a: unknown, b: unknown) => {
+  if (Array.isArray(a) && Array.isArray(b)) return [...a].sort().join("\u0000") === [...b].sort().join("\u0000");
+  if (typeof a === "string" && typeof b === "string") return a.trim().toUpperCase() === b.trim().toUpperCase();
+  return a === b;
+};
+
+/**
+ * Three-way merge of a change that was made on the phone while the office may have edited the same record.
+ * `base` is what the phone started from, `server` is what the record holds now, `input` is what the technician
+ * saved. A field the technician did not touch (input equals base) keeps the server's value, so an office fix made in
+ * the meantime survives; a field the technician changed wins. `merged` lists the office changes that were kept.
+ */
+export function mergeWithServer<T extends FormValues>(server: FormValues, base: InstallationBase, input: T) {
+  const out = { ...input } as T;
+  const merged: string[] = [];
+  for (const f of MERGE_FIELDS) {
+    if (base[f] === undefined) continue;
+    if (!same(input[f], base[f])) continue; // the technician changed it: theirs wins
+    if (same(server[f], base[f])) continue; // nobody else changed it
+    (out as Record<string, unknown>)[f] = server[f];
+    merged.push(f);
+  }
+  return { input: out, merged };
+}
+
+/** The record's current values in the shape of the form. */
+async function currentValues(db: AppDb, id: string): Promise<FormValues> {
+  const r = await db.installation.findFirstOrThrow({ where: { id } });
+  return {
+    customerId: r.customerId ?? "",
+    vehicleNo: r.vehicleNo,
+    deviceId: r.deviceId,
+    simNo: r.simNo ?? "",
+    installDate: day(r.installDate),
+    location: r.location,
+    latitude: r.latitude == null ? "" : Number(r.latitude).toFixed(6),
+    longitude: r.longitude == null ? "" : Number(r.longitude).toFixed(6),
+    deviceType: r.deviceType,
+    hasTempSensor: r.hasTempSensor,
+    checklist: r.checklist,
+    notes: r.notes ?? "",
+  };
 }
 
 /** A technician finishes or changes only a record that is still on hold. */
@@ -66,7 +128,7 @@ async function heldMineOrThrow(db: AppDb, actor: CurrentUser, id: string) {
   const row = await mineOrThrow(db, actor, id);
   if (row.status !== "ON_HOLD") {
     const message = "This installation is already completed.";
-    throw new ConflictError(message, { form: [message] });
+    throw new ConflictError(message, { form: [message] }, "INSTALLATION_ALREADY_COMPLETED");
   }
   return row;
 }
@@ -208,9 +270,19 @@ export const installationsService = {
    * Saves a half-finished installation as ON_HOLD: nothing is required. With an id the technician's own held
    * record is updated; without one a new held record is created.
    */
-  async hold(db: AppDb, actor: CurrentUser, input: HoldInstallationInput, id?: string): Promise<{ id: string }> {
+  async hold(
+    db: AppDb,
+    actor: CurrentUser,
+    asked: HoldInstallationInput,
+    id?: string,
+  ): Promise<{ id: string; merged?: string[] }> {
     const companyId = companyOf(actor);
-    if (id) await heldMineOrThrow(db, actor, id);
+    let input = asked;
+    let merged: string[] = [];
+    if (id) {
+      await heldMineOrThrow(db, actor, id);
+      if (asked.base) ({ input, merged } = mergeWithServer(await currentValues(db, id), asked.base, asked));
+    }
     if (input.customerId) await customerOrThrow(db, input.customerId);
     await uniqueOrThrow(db, input, id);
     const data = {
@@ -220,17 +292,25 @@ export const installationsService = {
       holdBy: null,
       holdAt: null,
     };
-    if (id) return db.installation.update({ where: { id }, data, select: { id: true } });
+    if (id) return { ...(await db.installation.update({ where: { id }, data, select: { id: true } })), merged };
     return db.installation.create({ data: { companyId, ...data, status: "ON_HOLD" }, select: { id: true } });
   },
 
   /** The technician finishes a held record: everything is checked, then it becomes COMPLETED. */
-  async completeHeld(db: AppDb, actor: CurrentUser, id: string, input: InstallationInput): Promise<{ id: string }> {
+  async completeHeld(
+    db: AppDb,
+    actor: CurrentUser,
+    id: string,
+    asked: InstallationInput,
+  ): Promise<{ id: string; merged: string[] }> {
     await heldMineOrThrow(db, actor, id);
+    const { input, merged } = asked.base
+      ? mergeWithServer(await currentValues(db, id), asked.base, asked)
+      : { input: asked, merged: [] as string[] };
     fillRequired(input);
     await customerOrThrow(db, input.customerId);
     await uniqueOrThrow(db, input, id);
-    return db.installation.update({
+    const saved = await db.installation.update({
       where: { id },
       data: {
         ...dataOf(input),
@@ -242,6 +322,7 @@ export const installationsService = {
       },
       select: { id: true },
     });
+    return { ...saved, merged };
   },
 
   async create(db: AppDb, actor: CurrentUser, input: InstallationInput): Promise<{ id: string }> {

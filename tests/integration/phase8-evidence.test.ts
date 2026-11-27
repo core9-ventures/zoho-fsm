@@ -294,12 +294,13 @@ describe("technician app", () => {
     expect(job.meId).toBe(techA.id);
 
     // Another technician cannot touch this job at all.
-    await expect(fieldService.uploadFile(dbB, techB, id, photo(3), { phase: "BEFORE" })).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
+    // (refused with the reason a queued change would show: the job belongs to someone else)
+    await expect(fieldService.uploadFile(dbB, techB, id, photo(3), { phase: "BEFORE" })).rejects.toMatchObject({
+      code: "JOB_REASSIGNED",
+    });
     await expect(
       fieldService.addIssue(dbB, techB, id, { title: "x", details: "", status: "FOUND" }),
-    ).rejects.toBeInstanceOf(NotFoundError);
+    ).rejects.toMatchObject({ code: "JOB_REASSIGNED" });
 
     // The office adds a file; the technician cannot remove it, but can remove their own.
     const officeFile = await workOrdersService.addAttachment(db, dispatcher, id, photo(4), {
@@ -355,7 +356,7 @@ describe("voice notes", () => {
       },
     });
     await fieldService.uploadFile(dbA, techA, id, voice(1));
-    await expect(fieldService.uploadFile(dbB, techB, id, voice(2))).rejects.toBeInstanceOf(NotFoundError);
+    await expect(fieldService.uploadFile(dbB, techB, id, voice(2))).rejects.toMatchObject({ code: "JOB_REASSIGNED" });
     const officeNote = await workOrdersService.addAttachment(db, dispatcher, id, voice(3));
 
     const job = await fieldService.job(dbA, techA, id);

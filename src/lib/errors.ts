@@ -40,15 +40,16 @@ export class ForbiddenError extends AppError {
 }
 
 export class NotFoundError extends AppError {
-  constructor(entity = "Resource", id?: string) {
-    super(id ? `${entity} ${id} was not found.` : `${entity} was not found.`, 404, "NOT_FOUND");
+  constructor(entity = "Resource", id?: string, code = "NOT_FOUND") {
+    super(id ? `${entity} ${id} was not found.` : `${entity} was not found.`, 404, code);
   }
 }
 
 /** Business-rule conflicts: invalid status move, schedule overlap, duplicate email… */
 export class ConflictError extends AppError {
-  constructor(message: string, errors?: FieldErrors) {
-    super(message, 409, "CONFLICT", errors);
+  /** `code` is a short machine-readable reason (e.g. JOB_CANCELLED) the phone turns into a plain explanation. */
+  constructor(message: string, errors?: FieldErrors, code = "CONFLICT") {
+    super(message, 409, code, errors);
   }
 }
 

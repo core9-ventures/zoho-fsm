@@ -13,13 +13,13 @@ import type { AppRole } from "./roles";
 import { permissionForApi } from "./permissions";
 
 /** Standard response envelope: { success, message, data, errors }. */
-export type ApiEnvelope<T> = { success: boolean; message?: string; data?: T; errors?: FieldErrors };
+export type ApiEnvelope<T> = { success: boolean; message?: string; data?: T; errors?: FieldErrors; code?: string };
 
 export const ok = <T>(data: T, message?: string, status = 200) =>
   NextResponse.json<ApiEnvelope<T>>({ success: true, message, data }, { status });
 
-export const fail = (status: number, message: string, errors?: FieldErrors) =>
-  NextResponse.json<ApiEnvelope<never>>({ success: false, message, errors }, { status });
+export const fail = (status: number, message: string, errors?: FieldErrors, code?: string) =>
+  NextResponse.json<ApiEnvelope<never>>({ success: false, message, errors, code }, { status });
 
 type RouteParams = { params: Promise<Record<string, string | string[]>> };
 
@@ -163,7 +163,7 @@ export function toErrorResponse(err: unknown, log = logger): Response {
   if (err instanceof AppError) {
     if (err.status >= 500) log.error({ err }, err.message);
     else log.warn({ code: err.code }, err.message);
-    return fail(err.status, err.message, err.errors);
+    return fail(err.status, err.message, err.errors, err.code);
   }
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === "P2002") return fail(409, "A record with these values already exists.");

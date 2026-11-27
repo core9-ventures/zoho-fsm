@@ -29,14 +29,38 @@ async function zoneOf(db: AppDb, companyId: string) {
 }
 
 /** A technician can only touch work orders that have (or had) a visit assigned to them. */
-export async function assertMine(db: AppDb, actor: CurrentUser, workOrderId: string) {
+/**
+ * The visit of this job that belongs to the technician, or an error. With `forChange` the error says why a queued
+ * change cannot be applied (cancelled, given to someone else, deleted, ...); a plain read says only "not found", so
+ * nothing about a job that is not theirs is revealed.
+ */
+export async function assertMine(db: AppDb, actor: CurrentUser, workOrderId: string, forChange = false) {
   const a = await db.appointment.findFirst({
     where: { workOrderId, technicianId: actor.id, status: { not: "CANCELLED" } },
     orderBy: { scheduledStart: "desc" },
     select: { id: true, status: true, scheduledStart: true, scheduledEnd: true },
   });
-  if (!a) throw new NotFoundError("Job", workOrderId);
+  if (!a) throw forChange ? await whyNotMine(db, workOrderId) : new NotFoundError("Job", workOrderId);
+  // A job the office deleted keeps its visit row; the soft delete hides only the job itself.
+  if (!(await db.workOrder.findFirst({ where: { id: workOrderId }, select: { id: true } })))
+    throw new NotFoundError("Job", workOrderId, forChange ? "JOB_DELETED" : "NOT_FOUND");
   return a;
+}
+
+/**
+ * The technician's change cannot be applied because the job is no longer theirs to work on. The phone shows the
+ * reason in plain words (it may have been queued hours ago, while the office changed the job).
+ */
+async function whyNotMine(db: AppDb, workOrderId: string) {
+  const wo = await db.workOrder.findFirst({ where: { id: workOrderId }, select: { number: true, status: true } });
+  if (!wo) return new NotFoundError("Job", workOrderId, "JOB_DELETED");
+  if (wo.status === "CANCELLED") return new ConflictError(`${wo.number} was cancelled by the office.`, undefined, "JOB_CANCELLED");
+  const other = await db.appointment.findFirst({
+    where: { workOrderId, status: { not: "CANCELLED" } },
+    select: { id: true },
+  });
+  if (other) return new ConflictError(`${wo.number} was given to another technician.`, undefined, "JOB_REASSIGNED");
+  return new ConflictError(`${wo.number} is no longer scheduled for you.`, undefined, "JOB_UNSCHEDULED");
 }
 
 const toDec = (n: number | null | undefined) => (n == null ? null : new Prisma.Decimal(n.toFixed(6)));
@@ -191,12 +215,14 @@ export const fieldService = {
 
   /** Move the job along: on my way, start, hold, resume, complete. The state machine still applies. */
   async transition(db: AppDb, actor: CurrentUser, workOrderId: string, input: TransitionInput) {
-    const visit = await assertMine(db, actor, workOrderId);
+    const visit = await assertMine(db, actor, workOrderId, true);
     const wo = await db.workOrder.findFirst({ where: { id: workOrderId }, select: { status: true, number: true } });
     if (!wo) throw new NotFoundError("Job", workOrderId);
     const allowed = ACTIONS_FOR[wo.status] ?? [];
     if (!allowed.includes(input.action)) {
-      throw new ConflictError(`${wo.number} is ${wo.status.toLowerCase().replace("_", " ")}; you cannot do that now.`);
+      const now = wo.status.toLowerCase().replace("_", " ");
+      const code = wo.status === "COMPLETED" || wo.status === "CLOSED" ? "JOB_ALREADY_COMPLETED" : "JOB_STATUS_CHANGED";
+      throw new ConflictError(`${wo.number} is ${now}; you cannot do that now.`, undefined, code);
     }
     const move = (status: WorkOrderStatus, reason = "") =>
       workOrdersService.changeStatus(db, actor, workOrderId, { status, reason });
@@ -227,12 +253,12 @@ export const fieldService = {
   },
 
   async setChecklist(db: AppDb, actor: CurrentUser, workOrderId: string, itemId: string, isDone: boolean) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     await workOrdersService.setChecklistItem(db, actor, workOrderId, itemId, isDone);
   },
 
   async addNote(db: AppDb, actor: CurrentUser, workOrderId: string, text: string) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     await workOrdersService.addNote(db, actor, workOrderId, { text, isInternal: false });
   },
 
@@ -243,7 +269,7 @@ export const fieldService = {
     file: File,
     opts: { signature?: boolean; phase?: "BEFORE" | "AFTER"; issueId?: string; slot?: PhotoSlotKey } = {},
   ) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     return workOrdersService.addAttachment(db, actor, workOrderId, file, {
       kind: opts.signature ? "SIGNATURE" : undefined,
       phase: opts.phase,
@@ -254,7 +280,7 @@ export const fieldService = {
 
   /** A technician may take back only their own before/after proof and voice notes, and only while the job is open. */
   async removeFile(db: AppDb, actor: CurrentUser, workOrderId: string, attachmentId: string) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     const f = await db.attachment.findFirst({
       where: { id: attachmentId, entityType: "WORK_ORDER", entityId: workOrderId },
       select: { createdById: true, phase: true, kind: true },
@@ -266,27 +292,27 @@ export const fieldService = {
   },
 
   async saveServiceForm(db: AppDb, actor: CurrentUser, workOrderId: string, input: ServiceFormInput) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     await workOrdersService.saveServiceForm(db, actor, workOrderId, input);
   },
 
   async setTempSensor(db: AppDb, actor: CurrentUser, workOrderId: string, on: boolean) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     await workOrdersService.setTempSensor(db, workOrderId, on);
   },
 
   async addIssue(db: AppDb, actor: CurrentUser, workOrderId: string, input: IssueInput) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     return workOrdersService.addIssue(db, actor, workOrderId, input);
   },
 
   async updateIssue(db: AppDb, actor: CurrentUser, workOrderId: string, issueId: string, input: IssueInput) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     await workOrdersService.updateIssue(db, workOrderId, issueId, input);
   },
 
   async removeIssue(db: AppDb, actor: CurrentUser, workOrderId: string, issueId: string) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     await workOrdersService.removeIssue(db, workOrderId, issueId);
   },
 
@@ -303,7 +329,7 @@ export const fieldService = {
 
   /** "Parts used": the price and tax come from the catalog, never from the technician. */
   async addPart(db: AppDb, actor: CurrentUser, workOrderId: string, input: AddPartInput) {
-    await assertMine(db, actor, workOrderId);
+    await assertMine(db, actor, workOrderId, true);
     const item = await db.serviceItem.findFirst({
       where: { id: input.serviceItemId, type: "PART", isActive: true },
       select: { id: true, name: true, unitPrice: true, taxPercent: true },

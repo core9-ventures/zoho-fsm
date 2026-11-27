@@ -6,6 +6,7 @@ import {
   fieldInstallations,
   type CustomerChoice,
   type HoldInstallationInput,
+  type InstallationBase,
   type InstallationDetail,
   type InstallationInput,
 } from "../api";
@@ -63,6 +64,26 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
   const [simNo, setSimNo] = useState(held?.simNo ?? "");
   const [checked, setChecked] = useState<string[]>(held ? held.checklist : [...CHECKLIST]);
   const [notes, setNotes] = useState(held?.notes ?? "");
+  // What this form started from. Sent with a save, so the server keeps what the office changed on the record in the
+  // meantime (fields left alone here) and the technician's own changes win.
+  const base = useRef<InstallationBase | null>(
+    held
+      ? {
+          customerId: held.customerId ?? "",
+          vehicleNo: held.vehicleNo,
+          deviceId: held.deviceId,
+          simNo: held.simNo ?? "",
+          installDate: held.installDate,
+          location: held.location,
+          latitude: held.latitude != null ? held.latitude.toFixed(6) : "",
+          longitude: held.longitude != null ? held.longitude.toFixed(6) : "",
+          deviceType: held.deviceType,
+          hasTempSensor: held.hasTempSensor,
+          checklist: held.checklist,
+          notes: held.notes ?? "",
+        }
+      : null,
+  );
   const [showChecklist, setShowChecklist] = useState(false);
 
   const [errors, setErrors] = useState<Errors>({});
@@ -302,11 +323,11 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
         fill: { lat: pos.fix.lat, lng: pos.fix.lng, accuracy: pos.fix.accuracy },
       };
       if (held) {
-        const res = await fieldInstallations.complete(held.id, input);
+        const res = await fieldInstallations.complete(held.id, input, base.current);
         toast.success(
           res.queued
             ? `Record for ${vehicleNo.trim().toUpperCase()} saved on this phone. It is sent when you have a signal.`
-            : `Record for ${vehicleNo.trim().toUpperCase()} saved.`,
+            : `Record for ${vehicleNo.trim().toUpperCase()} saved.${mergedNote(res.data?.merged)}`,
         );
         goOn();
         return;
@@ -345,8 +366,12 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
         fill: fix ? { lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy } : null,
       };
       if (held) {
-        const res = await fieldInstallations.updateHeld(held.id, input);
-        toast.success(res.queued ? "Put on hold on this phone. It is sent when you have a signal." : "Put on hold.");
+        const res = await fieldInstallations.updateHeld(held.id, input, base.current);
+        toast.success(
+          res.queued
+            ? "Put on hold on this phone. It is sent when you have a signal."
+            : `Put on hold.${mergedNote(res.data?.merged)}`,
+        );
         goOn();
         return;
       }
@@ -631,6 +656,28 @@ export function InstallationForm({ customers, held }: { customers: CustomerChoic
 }
 
 /** A held record's saved files as grid items. */
+const FIELD_NAME: Record<string, string> = {
+  customerId: "company",
+  vehicleNo: "vehicle number",
+  deviceId: "device ID",
+  simNo: "SIM number",
+  installDate: "date",
+  location: "location",
+  latitude: "position",
+  longitude: "position",
+  deviceType: "device type",
+  hasTempSensor: "temperature sensor",
+  checklist: "checklist",
+  notes: "notes",
+};
+
+/** " The office's changes to the location were kept." — when the server merged an edit made by the office. */
+function mergedNote(merged?: string[]): string {
+  if (!merged || merged.length === 0) return "";
+  const names = [...new Set(merged.map((f) => FIELD_NAME[f] ?? f))];
+  return ` The office's changes to the ${names.join(", ")} were kept.`;
+}
+
 function remoteItems(d?: InstallationDetail): PhotoItem[] {
   if (!d) return [];
   return [...d.files, ...d.photos].map((f) => ({

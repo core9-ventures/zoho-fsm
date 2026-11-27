@@ -156,9 +156,9 @@ describe("service form", () => {
     expect(job.serviceForm).toMatchObject({ vehicleNumber: "KAA-2187", visitTypes: ["REDO"] });
     expect(job.formContext.ticket).toBe("ZD-9001");
 
-    await expect(fieldService.saveServiceForm(dbB, techB, id, form({ vehicleNumber: "X" }))).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
+    await expect(fieldService.saveServiceForm(dbB, techB, id, form({ vehicleNumber: "X" }))).rejects.toMatchObject({
+      code: "JOB_REASSIGNED",
+    });
   });
 
   it("the office can keep filling it while QA waits, but nobody can change it once closed", async () => {

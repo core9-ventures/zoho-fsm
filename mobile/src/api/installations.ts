@@ -5,6 +5,7 @@ import type {
   InstallationDetail,
   InstallationInput,
   InstallationListItem,
+  InstallationBase,
   InstallationListQuery,
 } from "@/modules/installations/installations.schema";
 import { customersCache, installationsCache } from "../local/cache";
@@ -16,6 +17,7 @@ import { authApi } from "./auth";
 
 // The input shapes are the server's own zod types, so the app and the server cannot drift apart.
 export type {
+  InstallationBase,
   CustomerChoice,
   HoldInstallationInput,
   InstallationDetail,
@@ -89,23 +91,23 @@ export const fieldInstallations = {
     return res.queued ? { id: localId, queued: true } : { id: res.data.id, queued: false };
   },
   /** Saves changes to a held record (it stays on hold). */
-  updateHeld: async (id: string, input: HoldInstallationInput) => {
+  updateHeld: async (id: string, input: HoldInstallationInput, base?: InstallationBase | null) => {
     const who = authApi.cachedUser()?.fullName ?? null;
-    return write<{ id: string }>({
+    return write<{ id: string; merged?: string[] }>({
       method: "PUT",
       path: `/field/installations/${id}/hold`,
-      body: input,
+      body: base ? { ...input, base } : input,
       label: `Held installation ${input.vehicleNo.trim().toUpperCase() || "(no vehicle yet)"}`,
       optimistic: () => optimistic.installationSaved(id, input, "ON_HOLD", who),
     });
   },
   /** Finishes a held record. */
-  complete: async (id: string, input: InstallationInput) => {
+  complete: async (id: string, input: InstallationInput, base?: InstallationBase | null) => {
     const who = authApi.cachedUser()?.fullName ?? null;
-    return write<{ id: string }>({
+    return write<{ id: string; merged: string[] }>({
       method: "POST",
       path: `/field/installations/${id}/complete`,
-      body: input,
+      body: base ? { ...input, base } : input,
       label: `Installation ${input.vehicleNo.trim().toUpperCase()}`,
       optimistic: () => optimistic.installationSaved(id, input, "COMPLETED", who),
     });

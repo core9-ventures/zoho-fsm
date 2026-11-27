@@ -102,6 +102,13 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 4,
+    statements: [
+      // Why the server refused a change (a short code such as JOB_CANCELLED), so the phone can explain it.
+      `ALTER TABLE outbox ADD COLUMN error_code TEXT`,
+    ],
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

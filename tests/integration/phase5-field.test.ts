@@ -124,8 +124,10 @@ describe("Phase 5 — technician field app", () => {
     expect((await fieldService.myJobs(dbB, techB)).jobs.map((j) => j.workOrderId)).not.toContain(wo.id);
 
     await expect(fieldService.job(dbB, techB, wo.id)).rejects.toBeInstanceOf(NotFoundError);
-    await expect(fieldService.transition(dbB, techB, wo.id, { action: "start" })).rejects.toBeInstanceOf(NotFoundError);
-    await expect(fieldService.addNote(dbB, techB, wo.id, "sneaky")).rejects.toBeInstanceOf(NotFoundError);
+    // Reading a job that is not theirs stays "not found". A change is refused with the reason (Offline Phase 5): the
+    // phone may have queued it before the office gave the job to someone else. Nothing of the job is revealed.
+    await expect(fieldService.transition(dbB, techB, wo.id, { action: "start" })).rejects.toMatchObject({ code: "JOB_REASSIGNED" });
+    await expect(fieldService.addNote(dbB, techB, wo.id, "sneaky")).rejects.toMatchObject({ code: "JOB_REASSIGNED" });
 
     const detail = await fieldService.job(dbA, techA, wo.id);
     expect(detail.actions).toEqual(["on-my-way", "start"]);

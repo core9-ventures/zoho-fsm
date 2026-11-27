@@ -9,6 +9,7 @@ export { attachments, fieldJobs, fieldLocation } from "./jobs";
 export type {
   CustomerChoice,
   HoldInstallationInput,
+  InstallationBase,
   InstallationDetail,
   InstallationInput,
   InstallationListItem,

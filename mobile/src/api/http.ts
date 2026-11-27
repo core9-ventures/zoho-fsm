@@ -3,7 +3,7 @@ import { wipeLocalData } from "../local/db";
 import { clearTokens, readTokens, saveTokens, type Tokens } from "./tokens";
 
 /** The server's response envelope. */
-type Envelope<T> = { success: boolean; message?: string; data?: T; errors?: Record<string, string[]> };
+type Envelope<T> = { success: boolean; message?: string; data?: T; errors?: Record<string, string[]>; code?: string };
 
 /** A failed call. status 0 means the server could not be reached at all. */
 export class ApiError extends Error {
@@ -12,6 +12,8 @@ export class ApiError extends Error {
     readonly status: number,
     /** Per-field messages from the server (keys are field names such as "simNo"). */
     readonly fieldErrors: Record<string, string[]> = {},
+    /** The server's short reason (JOB_CANCELLED, JOB_REASSIGNED, ...), when it gave one. */
+    readonly code: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -121,7 +123,12 @@ async function refreshTokens(): Promise<Tokens | null> {
 async function parse<T>(res: Response): Promise<T> {
   const json = (await res.json().catch(() => null)) as Envelope<T> | null;
   if (!res.ok || !json || json.success === false) {
-    throw new ApiError(json?.message ?? `The server answered with an error (${res.status}).`, res.status, json?.errors);
+    throw new ApiError(
+      json?.message ?? `The server answered with an error (${res.status}).`,
+      res.status,
+      json?.errors,
+      json?.code ?? null,
+    );
   }
   return json.data as T;
 }
