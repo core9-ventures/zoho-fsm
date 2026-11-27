@@ -13,5 +13,7 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(here, "../src") } },
   // Tailwind runs as a Vite plugin here; do not load the web app's PostCSS config from the parent folder.
   css: { postcss: { plugins: [] } },
+  // `VITE_READABLE=1 node scripts/build-apk.mjs` builds an APK with readable names in error messages (for finding a crash).
+  build: { minify: process.env.VITE_READABLE ? false : undefined },
   server: { port: 5173, host: true, fs: { allow: [path.resolve(here, "..")] } },
 });

@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { App } from "./App";
+import { CrashScreen } from "./components/CrashScreen";
 import * as api from "./api";
 import { SessionProvider } from "./session";
 import { useSystemTheme } from "./theme";
@@ -23,7 +24,7 @@ function Root() {
 }
 
 // A "data router" (instead of <BrowserRouter>) so screens can warn before the technician leaves unsaved work.
-const router = createBrowserRouter([{ path: "*", element: <Root /> }]);
+const router = createBrowserRouter([{ path: "*", element: <Root />, errorElement: <CrashScreen /> }]);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
